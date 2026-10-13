@@ -26,4 +26,4 @@ export type Report = {
   id: string; createdAt: string; filename: string; kind: FileKind; size: number;
   sha256: string; model: string; durationMs: number; assessment: Assessment; artifact: Artifact;
 };
-export type AppConfig = { aiReady: boolean; storageReady: boolean; maxBytes: number; model: string };
+export type AppConfig = { aiReady: boolean; storageReady: boolean; maxBytes: number; model: string; fallbackModel: string };

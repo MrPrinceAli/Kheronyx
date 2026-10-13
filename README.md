@@ -12,7 +12,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Fill `ACCESS_PASSWORD`, a random `SESSION_SECRET`, and `AI_API_KEY` in `.env`. This workspace includes a preconfigured ignored `.env` with the requested password; only the AI key is intentionally empty. Gateway: `https://tokengateway.ai.id/v1`. Set `AI_MODEL` to a model offered by your account, or leave it empty for `/models` discovery. Keys and password validation stay server-side.
+Fill `ACCESS_PASSWORD`, a random `SESSION_SECRET`, and `AI_API_KEY` in `.env`. This workspace includes a preconfigured ignored `.env` with the requested password; only the AI key is intentionally empty. Gateway: `https://tokengateway.ai.id/v1`. Primary: `AI_MODEL=gpt-6-astra`. Backup: `AI_FALLBACK_MODEL=gpt-6.1-sol`. Model IDs must be available to your gateway account. Keys and password validation stay server-side.
+
+The backup is tried once if the primary is unavailable, rate limited, times out, or returns an invalid/incomplete report. Invalid keys, insufficient balance, general bad requests, and explicit model refusals are returned as errors. Both failures produce an error, never a fabricated verdict. Reports record the model that actually returned a valid assessment. Requests to these reasoning GPT models omit temperature and use medium reasoning with an 8,000-token combined reasoning/output cap. Each model has a 65-second request timeout; the combined budget fits the 180-second analysis route. Leave `AI_FALLBACK_MODEL` explicitly empty to disable the backup.
 
 ## Vercel
 
