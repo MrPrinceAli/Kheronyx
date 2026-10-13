@@ -20,7 +20,7 @@
 }
 
 .animated .gaze {
-  animation: acquireTarget 11.4s steps(1, end) infinite;
+  animation: acquireTarget 11.4s cubic-bezier(.45, 0, .25, 1) infinite;
 }
 
 .animated .beam {
@@ -32,11 +32,11 @@
 }
 
 @keyframes acquireTarget {
-  0%, 27% { transform: translate(0, 0); }
-  27.4%, 44% { transform: translate(17px, -2px); }
-  44.4%, 71% { transform: translate(-12px, 1px); }
-  71.4%, 88% { transform: translate(-4px, 0); }
-  88.4%, 100% { transform: translate(0, 0); }
+  0%, 20% { transform: translate(0, 0); }
+  28%, 40% { transform: translate(17px, -2px); }
+  51%, 64% { transform: translate(-12px, 1px); }
+  76%, 84% { transform: translate(-4px, 0); }
+  94%, 100% { transform: translate(0, 0); }
 }
 
 @keyframes interrogate {

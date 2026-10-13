@@ -2,7 +2,7 @@ import { useId } from "react";
 import styles from "./eye.module.css";
 export function Eye({className="",animated=false}:{className?:string;animated?:boolean}) {
   const id=useId().replace(/:/g,"");
-  const opening="M48 161C143 116 230 108 300 119C382 110 469 129 551 163C458 196 376 216 297 213C209 213 125 192 48 161Z";
+  const opening="M48 161C204 100 386 104 551 163C458 196 376 216 297 213C209 213 125 192 48 161Z";
   const fibers=Array.from({length:64},(_,i)=>{
     const angle=i*Math.PI/32,inner=29+(i%5)*3,outer=69+(i%7)*2;
     const point=(radius:number,theta:number)=>`${(300+Math.cos(theta)*radius).toFixed(3)} ${(162+Math.sin(theta)*radius).toFixed(3)}`;
@@ -16,7 +16,7 @@ export function Eye({className="",animated=false}:{className?:string;animated?:b
       <linearGradient id={`${id}-beam`}><stop stopColor="white" stopOpacity="0"/><stop offset=".34" stopColor="white" stopOpacity=".7"/><stop offset=".5" stopColor="white"/><stop offset=".68" stopColor="white" stopOpacity=".7"/><stop offset="1" stopColor="white" stopOpacity="0"/></linearGradient>
       <clipPath id={`${id}-clip`}><path d={opening}/></clipPath>
     </defs>
-    <path d="M17 161L69 122C148 77 240 74 306 95C398 75 496 105 583 162L550 182C462 224 373 243 294 235C199 237 111 207 17 161Z" fill="#080a0c"/>
+    <path d="M17 161C165 74 401 66 583 162C462 224 373 243 294 235C199 237 111 207 17 161Z" fill="#080a0c"/>
     <path d={opening} fill={`url(#${id}-sclera)`}/>
     <g clipPath={`url(#${id}-clip)`}>
       <g className={styles.gaze}>
@@ -34,9 +34,8 @@ export function Eye({className="",animated=false}:{className?:string;animated?:b
       <g className={styles.beam}><rect x="30" y="112" width="550" height="1.4" fill={`url(#${id}-beam)`}/><rect x="30" y="113.4" width="550" height="9" fill="white" opacity=".045"/><path d="M278 110H289M311 110H322" stroke="white" strokeWidth=".7" opacity=".7"/></g>
       <g className={styles.shutter}><rect x="25" y="105" width="560" height="127" fill="#080a0c"/></g>
     </g>
-    <path d="M17 161L76 119C168 78 238 88 306 109C399 91 493 120 583 162L551 169C455 131 380 119 300 127C226 114 139 124 48 169Z" fill="#050608"/>
+    <path d="M17 161C165 74 401 66 583 162L551 169C393 105 204 99 48 169Z" fill="#050608"/>
     <path d="M54 178C157 223 231 237 298 231C387 238 474 211 550 179" stroke="#444d53" strokeWidth="1.2"/>
-    <path d="M75 96L153 76L248 89M373 90L443 90L518 120" stroke="#101419" strokeWidth="2" strokeLinecap="square"/>
     <path d="M42 198L100 216M501 211L563 184" stroke="#788189" strokeWidth=".7" opacity=".4"/>
   </svg>;
 }

@@ -20,7 +20,7 @@ const fileFormats = [
 export function Landing() {
   const [open,setOpen]=useState(false),[password,setPassword]=useState(""),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const input=useRef<HTMLInputElement>(null);const router=useRouter();
-  useEffect(()=>{if(open)input.current?.focus();},[open]);
+  useEffect(()=>{if(open)input.current?.focus({preventScroll:true});},[open]);
   async function login(e:React.FormEvent) {
     e.preventDefault();if(busy)return;setBusy(true);setError("");
     try{const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});const body=await response.json();if(!response.ok)throw new Error(body.error);router.push("/dashboard");router.refresh();}catch(e){setError(e instanceof Error?e.message:"Koneksi terputus. Coba lagi.");setBusy(false);}
@@ -42,7 +42,9 @@ export function Landing() {
         <p className="builder">build by <span>./Viclatess</span></p>
       </div>
       <div className="login-area"><button className={`button button-dark login-toggle ${open?"is-open":""}`} onClick={()=>setOpen(!open)} aria-expanded={open} aria-controls="login-form"><LockKeyhole size={16}/>Login<ArrowRight size={16}/></button>
-        {open && <form id="login-form" className="login-form" onSubmit={login}><label htmlFor="password">Password akses</label><div className={`password-field ${error?"field-error":""}`}><input id="password" ref={input} type={visible?"text":"password"} autoComplete="current-password" placeholder="Masukkan password" value={password} onChange={e=>setPassword(e.target.value)} maxLength={256} required/><button type="button" className="icon-button" onClick={()=>setVisible(!visible)} aria-label={visible?"Sembunyikan password":"Tampilkan password"}>{visible?<EyeOff size={16}/>:<EyeIcon size={16}/>}</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<button className="button button-dark" disabled={busy || !password}>{busy?<Loader2 size={16} className="spin"/>:<ArrowRight size={16}/>} {busy?"Memeriksa akses…":"Masuk ke dashboard"}</button><span className="login-caption"><ShieldCheck size={12}/>Akses privat. Tanpa akun tambahan.</span></form>}
+        <div className={styles.loginReveal} aria-hidden={!open} inert={!open}><div className={styles.loginRevealInner}>
+          <form id="login-form" className="login-form" onSubmit={login}><div className={`password-field ${error?"field-error":""}`}><input id="password" ref={input} type={visible?"text":"password"} aria-label="Password" autoComplete="current-password" placeholder="Masukkan password" value={password} onChange={e=>setPassword(e.target.value)} maxLength={256} required/><button type="button" className="icon-button" onClick={()=>setVisible(!visible)} aria-label={visible?"Sembunyikan password":"Tampilkan password"}>{visible?<EyeOff size={16}/>:<EyeIcon size={16}/>}</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<button className="button button-dark" disabled={busy || !password}>{busy?<Loader2 size={16} className="spin"/>:<ArrowRight size={16}/>} {busy?"Memeriksa akses…":"Masuk ke dashboard"}</button><span className="login-caption"><ShieldCheck size={12}/>Private Access</span></form>
+        </div></div>
       </div>
     </main>
     <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><span className="footer-copyright">© 2026 Kheronyx</span></footer>

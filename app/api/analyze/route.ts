@@ -4,9 +4,10 @@ import { sameOrigin, sessionId } from "@/lib/auth";
 import { aiConfigured, assess } from "@/lib/ai";
 import { bucketName, db, rateLimit, saveReport } from "@/lib/db";
 import { extractFile, MAX_BYTES } from "@/lib/extract";
+import { inspectVirusTotal } from "@/lib/virustotal";
 import type { Report } from "@/lib/types";
 export const runtime="nodejs";
-export const maxDuration=180;
+export const maxDuration=240;
 export async function POST(request:Request) {
   const session=await sessionId();if(!session)return NextResponse.json({error:"Login diperlukan."},{status:401});
   if(!sameOrigin(request))return NextResponse.json({error:"Permintaan ditolak."},{status:403});
@@ -14,9 +15,9 @@ export async function POST(request:Request) {
   let path:string|undefined;const start=Date.now();
   try {
     if(!await rateLimit(`analyze:${session}`,20,3600))return NextResponse.json({error:"Batas 20 analisis per jam tercapai. Coba lagi nanti."},{status:429});
-    let buffer:Buffer,filename:string;
+    let buffer:Buffer,filename:string,uploadVirusTotal=false;
     if(request.headers.get("content-type")?.includes("application/json")) {
-      const body=await request.json();path=body.path;filename=body.filename;
+      const body=await request.json();path=body.path;filename=body.filename;uploadVirusTotal=body.uploadVirusTotal===true;
       if(typeof path!=="string" || typeof filename!=="string" || filename.length>200 || !new RegExp(`^${session}/[a-f0-9-]{36}\\.(pdf|apk|exe|png|jpg)$`).test(path)){path=undefined;throw new Error("Referensi upload tidak valid.");}
       const supabase=db();if(!supabase)throw new Error("Storage belum terhubung.");
       const {data:info,error:infoError}=await supabase.storage.from(bucketName()).info(path);
@@ -26,10 +27,12 @@ export async function POST(request:Request) {
       if(error || !data)throw new Error("File belum dapat diambil. Upload ulang.");buffer=Buffer.from(await data.arrayBuffer());
     }else {
       if(Number(request.headers.get("content-length")||0)>4*1024*1024+10000)throw new Error("Tanpa storage, batas upload langsung adalah 4 MB.");
-      const body=await request.formData();const file=body.get("file");
+      const body=await request.formData();const file=body.get("file");uploadVirusTotal=body.get("uploadVirusTotal")==="true";
       if(!(file instanceof File) || file.size>4*1024*1024)throw new Error("Pilih file maksimal 4 MB atau hubungkan Supabase untuk file besar.");filename=file.name;buffer=Buffer.from(await file.arrayBuffer());
     }
-    const artifact=await extractFile(buffer,filename);const {assessment,model}=await assess(artifact);
+    const artifact=await extractFile(buffer,filename);
+    artifact.virusTotal=await inspectVirusTotal(artifact,buffer,uploadVirusTotal);
+    const {assessment,model}=await assess(artifact);
     const report:Report={id:randomUUID(),createdAt:new Date().toISOString(),filename:artifact.filename,kind:artifact.kind,size:artifact.size,sha256:artifact.sha256,model,durationMs:Date.now()-start,assessment,artifact};
     let persisted=false,warning:string|undefined;
     try{persisted=await saveReport(report);}catch(error){warning=error instanceof Error?error.message:"Laporan gagal disimpan.";}

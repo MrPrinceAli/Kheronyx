@@ -1,4 +1,5 @@
 .page:global(.landing) {
+  --motion: 420ms cubic-bezier(.22, 1, .36, 1);
   --edge: clamp(20px, 4vw, 56px);
   height: 100svh;
   height: 100dvh;
@@ -25,6 +26,7 @@
   width: min(460px, 82vw);
   height: clamp(150px, 27dvh, 250px);
   margin-bottom: clamp(14px, 3.2dvh, 32px);
+  transition: width var(--motion), height var(--motion), margin-bottom var(--motion);
 }
 
 .page :global(.hero-eye) {
@@ -37,6 +39,7 @@
   font-size: clamp(40px, 6.5dvh, 60px);
   line-height: 1.1;
   margin: 10px 0 6px;
+  transition: font-size var(--motion), letter-spacing var(--motion), margin var(--motion);
 }
 
 .page :global(.hero-tagline) {
@@ -45,10 +48,35 @@
 
 .page :global(.builder) {
   margin-top: clamp(12px, 2.4dvh, 24px);
+  transition: margin-top var(--motion);
 }
 
 .page :global(.login-area) {
   margin-top: clamp(14px, 2.7dvh, 26px);
+  transition: margin-top var(--motion);
+}
+
+.loginReveal {
+  width: 100%;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-8px);
+  visibility: hidden;
+  transition: grid-template-rows var(--motion), opacity 220ms ease, transform var(--motion), visibility 0s linear 420ms;
+}
+
+.loginRevealInner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.loginOpen .loginReveal {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .page :global(.landing-footer) {
@@ -97,6 +125,11 @@
 .page :global(.login-form) {
   margin-top: 12px;
   padding: 16px;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loginReveal { transition: none; }
 }
 
 .page :global(.login-caption) {

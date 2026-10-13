@@ -1,0 +1,32 @@
+.panel { margin: 22px 28px 0; padding: 18px 20px; background: #fafbfc; border: 1px solid #e8edf1; border-radius: 14px; }
+.heading, .name, .actions { display: flex; align-items: center; gap: 9px; }
+.heading { justify-content: space-between; gap: 12px; }
+.name { flex-wrap: wrap; color: #74818e; }
+.name h3 { color: #46525f; font-size: 12px; font-weight: 550; }
+.badge { padding: 4px 7px; border-radius: 6px; font-size: 8px; white-space: nowrap; background: #eef1f4; }
+.actions { flex-shrink: 0; }
+.actions button { min-height: 30px; padding: 6px 9px; font-size: 9px; gap: 6px; }
+.actions a { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; color: #85919d; border-radius: 7px; }
+.actions a:hover { background: #edf1f4; color: #414c58; }
+.panel p { color: #7c8997; font-size: 10px; line-height: 1.8; margin-top: 12px; }
+.score { display: flex; align-items: center; gap: 16px; margin-top: 16px; }
+.score strong { font-size: 28px; font-weight: 500; letter-spacing: -1px; }
+.score strong > span { color: #9aa5b0; font-size: 22px; }
+.score > span { font-size: 10px; color: #6d7a88; line-height: 1.8; }
+.score small { color: #929eaa; font-size: 9px; }
+.danger { color: var(--red); }
+.badge.danger { background: var(--red-bg); }
+.caution { color: var(--yellow); }
+.badge.caution { background: var(--yellow-bg); }
+.clear { color: var(--green); }
+.badge.clear { background: var(--green-bg); }
+.detections { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.detections > span { padding: 6px 8px; background: #fff; border: 1px solid #e9edf1; border-radius: 6px; color: #8c98a5; font-size: 9px; overflow-wrap: anywhere; max-width: 100%; }
+.detections b { font-weight: 500; color: #677583; margin-right: 6px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; color: #9ba6b1; font-size: 8px; line-height: 1.7; }
+@media (max-width: 650px) {
+  .panel { margin: 18px 18px 0; padding: 15px; }
+  .heading { align-items: flex-start; }
+  .name { gap: 7px; }
+  .actions button > span { display: none; }
+}

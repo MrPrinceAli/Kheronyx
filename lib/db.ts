@@ -34,3 +34,15 @@ export async function listReports() {
   const {data, error} = await supabase.from("kheronyx_reports").select("report").order("created_at", {ascending: false}).limit(30);
   if (error) throw new Error("Riwayat belum dapat dimuat."); return (data || []).map(row => row.report as Report);
 }
+export async function readReport(id: string): Promise<Report | null> {
+  const supabase = db(); if (!supabase) return null;
+  const {data, error} = await supabase.from("kheronyx_reports").select("report").eq("id", id).maybeSingle();
+  if (error) throw new Error("Laporan belum dapat dimuat.");
+  return data?.report as Report || null;
+}
+export async function updateReport(report: Report) {
+  const supabase = db(); if (!supabase) return false;
+  const {data, error} = await supabase.from("kheronyx_reports").update({risk: report.assessment.risk, report}).eq("id", report.id).eq("sha256", report.sha256).select("id").maybeSingle();
+  if (error || !data) throw new Error("Hasil diperbarui tetapi gagal disimpan. Unduh JSON untuk menyimpannya.");
+  return true;
+}

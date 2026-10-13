@@ -2,7 +2,7 @@
 
 A private, minimal file intelligence workspace. Landing page + password-only analysis dashboard. Supports PDF, APK, EXE, PNG, JPG/JPEG; DMG is coming soon.
 
-Production: https://kheronyx.vercel.app · Repository: https://github.com/MrPrinceAli/Kheronyx (private). Supabase resources are installed in the user-selected `pelita` project, under Kheronyx-specific names. The AI key is intentionally left for the owner to supply.
+Production: https://kheronyx.vercel.app · Repository: https://github.com/MrPrinceAli/Kheronyx (private). Supabase resources are installed in the user-selected `pelita` project, under Kheronyx-specific names. Credentials stay in the ignored local environment file and server environment variables.
 
 ## Run locally
 
@@ -12,9 +12,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Fill `ACCESS_PASSWORD`, a random `SESSION_SECRET`, and `AI_API_KEY` in `.env`. This workspace includes a preconfigured ignored `.env` with the requested password; only the AI key is intentionally empty. Gateway: `https://tokengateway.ai.id/v1`. Primary: `AI_MODEL=gpt-6-astra`. Backup: `AI_FALLBACK_MODEL=gpt-6.1-sol`. Model IDs must be available to your gateway account. Keys and password validation stay server-side.
+Fill `ACCESS_PASSWORD`, a random `SESSION_SECRET`, and `AI_API_KEY` in `.env`. Fill `VIRUSTOTAL_API_KEY` to activate antivirus reputation checks. This workspace includes a preconfigured ignored `.env`; keep its existing values when adding keys. Gateway: `https://tokengateway.ai.id/v1`. Primary: `AI_MODEL=gpt-6-astra`. Backup: `AI_FALLBACK_MODEL=gpt-6.1-sol`. Model IDs must be available to your gateway account. Keys and password validation stay server-side.
 
-The backup is tried once if the primary is unavailable, rate limited, times out, or returns an invalid/incomplete report. Invalid keys, insufficient balance, general bad requests, and explicit model refusals are returned as errors. Both failures produce an error, never a fabricated verdict. Reports record the model that actually returned a valid assessment. Requests to these reasoning GPT models omit temperature and use medium reasoning with an 8,000-token combined reasoning/output cap. Each model has a 65-second request timeout; the combined budget fits the 180-second analysis route. Leave `AI_FALLBACK_MODEL` explicitly empty to disable the backup.
+The backup is tried once if the primary is unavailable, rate limited, times out, or returns an invalid/incomplete report. Invalid keys, insufficient balance, general bad requests, and explicit model refusals are returned as errors. Both failures produce an error, never a fabricated verdict. Reports record the model that actually returned a valid assessment. Requests to these reasoning GPT models omit temperature and use medium reasoning with an 8,000-token combined reasoning/output cap. Each model has a 65-second request timeout; the combined budget leaves room for VirusTotal in the 240-second analysis route. Leave `AI_FALLBACK_MODEL` explicitly empty to disable the backup.
 
 ## Vercel
 
@@ -28,7 +28,15 @@ unset KHERONYX_PASSWORD
 
 The Vercel CLI can read secrets through stdin: `vercel env add AI_API_KEY production,preview --sensitive`. Do not put the key in `NEXT_PUBLIC_*` variables.
 
-After filling the local `.env`, run `npm run deploy` to synchronize server environment variables through stdin and redeploy the linked project. The sync script hashes the access password for production and never prints secret values.
+After filling the local `.env`, run `npm run deploy` to synchronize server environment variables, including `VIRUSTOTAL_API_KEY`, through stdin and redeploy the linked project. The sync script hashes the access password for production and never prints secret values.
+
+## VirusTotal
+
+Every analysis performs a [SHA-256 reputation lookup](https://docs.virustotal.com/reference/file-info) when `VIRUSTOTAL_API_KEY` is set. Existing antivirus counts, engine detections, and the original analysis date appear in the report and are supplied to the AI. Missing keys, unknown hashes, quota errors, invalid responses and pending scans are shown explicitly; none is treated as a clean antivirus result.
+
+For a file not in VirusTotal, select **Pindai file yang belum tercatat** before analysis to allow submission. This option starts unchecked and resets for each newly selected file. [Submitted files enter VirusTotal's dataset](https://docs.virustotal.com/reference/files-scan), so the dashboard explains sharing before submission. Raw bytes are sent only with this selection, under a hash-based filename. Files over 32 MB use the official large-upload URL; URLs are restricted to the VirusTotal HTTPS origin and redirects are blocked. A short wait checks for completion; queued or partial results stay pending. **Perbarui hasil** later fetches the file's reputation without uploading again, updates the report and preserves the initial AI explanation. Local quarantine deletion does not remove copies submitted to VirusTotal.
+
+The shared key is limited by Kheronyx to 4 requests per minute and 500 per day, with counters persisted in Supabase when configured. This matches the [Public API limits](https://docs.virustotal.com/reference/public-vs-premium-api); that API also prohibits commercial products/services. Check the entitlement of the key used for deployment. Provider quotas are displayed without suppressing static analysis. Malicious detections set a conservative minimum risk of high, suspicious detections a minimum of medium; false positives remain possible. Zero detections never lowers an existing concerning static verdict or proves safety. Old reports remain readable without a VirusTotal field. Results are stored inside the existing report JSON; no database migration is needed.
 
 ## Supabase
 
@@ -46,9 +54,10 @@ Limits: 40 MB per file with storage, 10 MB for PDF, 4 MB for direct upload witho
 - EXE: PE architecture, sections, entropy, flags, and imported library names; program is never run.
 - PNG/JPG: dimensions, structural metadata, and appended-data indicators. Pixels are never rendered.
 - Sends extracted evidence to the configured gateway for structured AI assessment; no raw executable upload to the model. Extracted document content can contain sensitive data, so the upload screen discloses AI processing.
-- Validates the AI response; incomplete extraction always produces an unknown risk verdict. Provider or schema failures produce errors, never fabricated reports.
+- Fetches VirusTotal evidence before AI assessment when configured; optional new-file scanning requires the sharing selection. Completed detections cannot be dismissed by the AI.
+- Validates the AI response; incomplete extraction produces an unknown risk verdict unless independent VirusTotal detections justify concern. AI provider or schema failures produce errors, never fabricated reports. VirusTotal failures remain explicit coverage limitations.
 
-**This is AI-assisted static risk analysis, not an antivirus or execution sandbox.** It does not establish that a file is safe or free of malware, verify Authenticode/APK signatures, detect all steganography, fully decompile code, or consult threat reputation services. Treat model confidence as interpretation confidence, not a probability of safety. Shared password holders can access the shared report history.
+**Local inspection is AI-assisted static analysis; antivirus evidence comes from VirusTotal when configured.** Kheronyx does not execute files or establish that a file is safe or free of malware, verify Authenticode/APK signatures, detect all steganography, or fully decompile code. Treat model confidence as interpretation confidence, not a probability of safety. Shared password holders can access the shared report history.
 
 ## Validation
 

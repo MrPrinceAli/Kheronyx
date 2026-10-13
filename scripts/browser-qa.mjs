@@ -17,7 +17,7 @@ const gateway=createServer(async(req,res)=>{
 });
 await new Promise(resolve=>gateway.listen(4001,'127.0.0.1',resolve));
 const useStorage=process.env.KHERONYX_QA_STORAGE==='1';let testReportId;
-const server=spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','127.0.0.1','--port','3001'],{env:{...process.env,...config,AI_API_KEY:'qa-only-fake-key',AI_BASE_URL:'http://127.0.0.1:4001/v1',AI_MODEL:'test-only-text-model',SUPABASE_URL:useStorage?config.SUPABASE_URL:'',SUPABASE_SERVICE_ROLE_KEY:useStorage?config.SUPABASE_SERVICE_ROLE_KEY:''},stdio:'ignore'});
+const server=spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','127.0.0.1','--port','3001'],{env:{...process.env,...config,AI_API_KEY:'qa-only-fake-key',AI_BASE_URL:'http://127.0.0.1:4001/v1',AI_MODEL:'test-only-text-model',VIRUSTOTAL_API_KEY:'',SUPABASE_URL:useStorage?config.SUPABASE_URL:'',SUPABASE_SERVICE_ROLE_KEY:useStorage?config.SUPABASE_SERVICE_ROLE_KEY:''},stdio:'ignore'});
 let browser;
 try {
   for(let i=0;i<60;i++){try{if((await fetch('http://127.0.0.1:3001')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));}
@@ -28,9 +28,9 @@ try {
   await page.goto('http://127.0.0.1:3001/dashboard');await page.waitForURL('http://127.0.0.1:3001/');
   await page.screenshot({path:'/private/tmp/kheronyx-qa/landing-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'Login',exact:true}).click();
-  await page.getByLabel('Password akses',{exact:true}).fill('incorrect');await page.getByRole('button',{name:'Masuk ke dashboard'}).click();
+  await page.getByLabel('Password',{exact:true}).fill('incorrect');await page.getByRole('button',{name:'Masuk ke dashboard'}).click();
   await page.locator('.form-error').waitFor();assert.match(await page.locator('.form-error').innerText(),/Password tidak cocok/);
-  await page.getByLabel('Password akses',{exact:true}).fill(config.ACCESS_PASSWORD);await page.getByRole('button',{name:'Masuk ke dashboard'}).click();
+  await page.getByLabel('Password',{exact:true}).fill(config.ACCESS_PASSWORD);await page.getByRole('button',{name:'Masuk ke dashboard'}).click();
   await page.waitForURL('**/dashboard');await page.getByText('Masih bersih di sini.').waitFor();
   await page.screenshot({path:'/private/tmp/kheronyx-qa/dashboard-desktop.png',fullPage:true});
   const cookies=await context.cookies();const session=cookies.find(c=>c.name==='kheronyx_session');assert.ok(session.httpOnly);assert.equal(session.sameSite,'Strict');
