@@ -1,4 +1,8 @@
-.content[data-transitioning="true"] :global(.landing .hero-eye) { opacity: 0; }
+/* The real landing eye rises above the smoke, then sinks into it — no second eye is drawn. */
+.content[data-access-transition="cover"] :global(.landing .hero-eye) {
+  z-index: 1001;
+  animation: eyeSink 1400ms cubic-bezier(.55, 0, .45, 1) forwards;
+}
 
 .scene {
   position: fixed;
@@ -9,62 +13,78 @@
   pointer-events: auto;
 }
 
-.veil, .scanWave {
+.smoke { position: absolute; inset: 0; }
+.defs { position: absolute; }
+
+.shroud {
   position: absolute;
   left: var(--eye-x);
   top: var(--eye-y);
-  width: 300vmax;
-  height: 300vmax;
+  width: 320vmax;
+  height: 320vmax;
   border-radius: 50%;
+  background: radial-gradient(circle, #05070a 52%, #05070ae6 60%, #05070a00 71%);
   transform: translate(-50%, -50%) scale(0);
-  will-change: transform;
 }
 
-.veil {
-  background: #020305;
-  box-shadow: 0 0 60px 35px #020305b3;
-}
-
-.scanWave { border: 1px solid #b2c0cd66; box-shadow: 0 0 25px #b2c0cd26; }
-.scene[data-access-transition="cover"] .veil { animation: flood 820ms cubic-bezier(.55, 0, .2, 1) forwards; }
-.scene[data-access-transition="cover"] .scanWave { animation: sweep 820ms cubic-bezier(.55, 0, .2, 1) forwards; }
-
-.eyeFrame {
+.puff {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: min(440px, 80vw);
-  height: min(220px, 40vw);
-  transform: translate(-50%, -50%);
-  filter: drop-shadow(0 0 22px #c9d8e636);
+  left: var(--eye-x);
+  top: var(--eye-y);
+  width: 48vmax;
+  height: 48vmax;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.04);
 }
 
-.eyeFrame > svg { display: block; width: 100%; height: 100%; }
-.scene[data-access-transition="cover"] .eyeFrame { animation: eyeApproach 820ms cubic-bezier(.22, 1, .36, 1) forwards; }
-.scene[data-access-transition="covered"], .scene[data-access-transition="reveal"] { background: #020305; }
-.scene[data-access-transition="covered"] .eyeFrame { animation: waitGlow 1.8s ease-in-out infinite; }
-.scene[data-access-transition="reveal"] { animation: reveal 850ms cubic-bezier(.22, 1, .36, 1) forwards; }
-.scene[data-access-transition="reveal"] .eyeFrame { animation: eyeLeave 700ms ease-out forwards; }
+.puff > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  animation: churn var(--churn) linear infinite;
+}
 
-@keyframes flood {
-  from { transform: translate(-50%, -50%) scale(0); }
+.puff:nth-child(odd) > svg { animation-direction: reverse; }
+
+.scene[data-access-transition="cover"] .shroud { animation: shroudRise 1350ms cubic-bezier(.5, 0, .3, 1) 120ms forwards; }
+.scene[data-access-transition="cover"] .puff { animation: billow 1050ms cubic-bezier(.2, .7, .3, 1) var(--delay) forwards; }
+
+.scene[data-access-transition="covered"] .shroud,
+.scene[data-access-transition="reveal"] .shroud { transform: translate(-50%, -50%) scale(1); }
+
+.scene[data-access-transition="covered"] .puff {
+  opacity: 1;
+  transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin));
+}
+
+.scene[data-access-transition="reveal"] .shroud { animation: shroudThin 800ms ease-out forwards; }
+.scene[data-access-transition="reveal"] .puff { animation: disperse 900ms cubic-bezier(.3, .1, .3, 1) var(--clear) forwards; }
+
+@keyframes eyeSink {
+  0%, 35% { opacity: 1; filter: drop-shadow(0 10px 13px #060e131f) blur(0); transform: scale(1); }
+  100% { opacity: 0; filter: drop-shadow(0 10px 13px #060e1300) blur(7px); transform: scale(.95); }
+}
+
+@keyframes shroudRise {
   to { transform: translate(-50%, -50%) scale(1); }
 }
 
-@keyframes sweep {
-  0% { transform: translate(-50%, -50%) scale(.008); opacity: .8; }
-  85%, 100% { transform: translate(-50%, -50%) scale(1.05); opacity: 0; }
+@keyframes billow {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.04) rotate(0); }
+  18% { opacity: 1; }
+  100% { opacity: 1; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin)); }
 }
 
-@keyframes eyeApproach {
-  from { left: var(--eye-x); top: var(--eye-y); width: var(--eye-width); height: var(--eye-height); }
-  to { left: 50%; top: 50%; width: min(440px, 80vw); height: min(220px, 40vw); }
-}
+@keyframes churn { to { transform: rotate(360deg); } }
 
-@keyframes waitGlow { 50% { filter: drop-shadow(0 0 28px #d4e1ec59); } }
-@keyframes reveal { from { opacity: 1; } to { opacity: 0; } }
-@keyframes eyeLeave { to { opacity: 0; transform: translate(-50%, -50%) scale(.94); } }
+@keyframes shroudThin { to { opacity: 0; } }
+
+@keyframes disperse {
+  from { opacity: 1; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin)); }
+  to { opacity: 0; transform: translate(-50%, -50%) translate(calc(var(--dx) * 1.9), calc(var(--dy) * 1.9)) scale(calc(var(--scale) * 1.35)) rotate(calc(var(--spin) * 1.6)); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .scene, .scene * { animation: none !important; }
+  .scene, .scene *, .content :global(.hero-eye) { animation: none !important; }
 }

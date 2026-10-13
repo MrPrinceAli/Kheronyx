@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, ChevronRight, CircleAlert, Clock3, File, FileCode2, FileImage, FileText, Fingerprint, Info, Loader2, LockKeyhole, LogOut, ScanLine, Shield, ShieldAlert, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { Eye } from "./eye";
+import { TypedHandle } from "./typed-handle";
 import { EngineStatus } from "./engine-status";
 import { VirusTotalPanel } from "./virus-total-panel";
 import { updateVirusTotalReport } from "@/lib/virus-total-evidence";
@@ -59,7 +60,7 @@ export function Dashboard({config}:{config:AppConfig}) {
         <div className="report-limits"><h3><Info size={15}/>Batas pemeriksaan</h3><ul>{active.assessment.limitations.map((l,i)=><li key={i}>{l}</li>)}</ul></div>
         <button className="technical-toggle" onClick={()=>setDetails(!details)} aria-expanded={details}><Fingerprint size={15}/>Detail teknis file<ChevronDown size={16} className={details?"rotate":""}/></button>{details&&<div className="technical-details"><div className="hash-row"><div><span>SHA-256</span><code>{active.sha256}</code></div><button className="button button-light" onClick={copyHash}>{copied?<Check size={13}/>:<Fingerprint size={13}/>} {copied?"Disalin":"Salin"}</button></div><div className="technical-meta"><span>Model <strong>{active.model}</strong></span><span>Waktu <strong>{(active.durationMs/1000).toFixed(1)} s</strong></span><span>Cakupan <strong>{active.artifact.incomplete?"Terbatas":"Ekstraksi statis"}</strong></span></div><pre>{JSON.stringify(active.artifact.metadata,null,2)}</pre></div>}
       </section>:<section className="analysis-explainer"><span className="explainer-icon"><ScanLine size={23} strokeWidth={1.4}/></span><div><h3>A deeper look, without opening the file.</h3><p>Kheronyx membaca struktur dan indikator file, lalu AI menjelaskan temuan serta batas pemeriksaannya.</p></div><span className="explainer-label">STATIC ANALYSIS</span></section>}
-      <footer className="dashboard-footer"><span>build by <strong>./Viclatess</strong></span><p>Penilaian AI membantu memahami risiko. Hasil bukan jaminan bebas malware.</p><span className="footer-note"><LockKeyhole size={12}/>PRIVATE WORKSPACE</span></footer>
+      <footer className="dashboard-footer"><span>build by <strong><TypedHandle/></strong></span><p>Penilaian AI membantu memahami risiko. Hasil bukan jaminan bebas malware.</p><span className="footer-note"><LockKeyhole size={12}/>PRIVATE WORKSPACE</span></footer>
     </main>
   </div>;
 }

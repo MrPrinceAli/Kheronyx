@@ -1,0 +1,40 @@
+.handle {
+  display: inline-grid;
+  vertical-align: bottom;
+}
+
+.handle .ghost,
+.handle .typed {
+  grid-area: 1 / 1;
+  margin: 0;
+  white-space: pre;
+}
+
+/* Reserves the full width (cursor included) so surrounding text never shifts while typing. */
+.handle .ghost {
+  visibility: hidden;
+  padding-right: calc(.6em + 1px);
+}
+
+.handle .glyph {
+  margin: 0;
+  color: var(--green);
+  opacity: .75;
+}
+
+.handle .cursor {
+  display: inline-block;
+  width: .6em;
+  height: 1.05em;
+  margin: 0 0 0 1px;
+  vertical-align: -.15em;
+  background: currentColor;
+  opacity: .7;
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .handle .cursor { animation: none; }
+}

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppWindow, ArrowRight, Eye as EyeIcon, EyeOff, FileImage, FileText, HardDrive, Image as ImageIcon, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
 import { Eye } from "./eye";
 import { useAccessTransition } from "./access-transition";
+import { TypedHandle } from "./typed-handle";
 import styles from "./landing.module.css";
 
 function AndroidIcon({size=13}:{size?:number}) {
@@ -39,7 +40,7 @@ export function Landing() {
         </div>
         <h1>Kheronyx<span className="title-dot">.</span></h1>
         <p className="hero-tagline">See beneath the surface.</p>
-        <p className="builder">build by <span>./Viclatess</span></p>
+        <p className="builder">build by <TypedHandle/></p>
       </div>
       <div className="login-area"><button className={`button button-dark login-toggle ${open?"is-open":""}`} onClick={()=>setOpen(!open)} aria-expanded={open} aria-controls="login-form"><LockKeyhole size={16}/>Login<ArrowRight size={16}/></button>
         <div className={styles.loginReveal} aria-hidden={!open} inert={!open}><div className={styles.loginRevealInner}>
