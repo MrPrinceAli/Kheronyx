@@ -1,7 +1,7 @@
-/* The real landing eye rises above the smoke, fades to a faint shape, and is swallowed last. */
+/* The real landing eye stays in place under the smoke: it fades to a faint shape while the smoke
+   leaves a hole around it, and is swallowed last when that hole closes. */
 .content[data-access-transition="cover"] :global(.landing .hero-eye),
 .content[data-access-transition="covered"] :global(.landing .hero-eye) {
-  z-index: 1001;
   animation: eyeSink 6000ms ease-in-out forwards;
 }
 
@@ -9,90 +9,22 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  overflow: hidden;
-  isolation: isolate;
   pointer-events: auto;
 }
 
-.smoke { position: absolute; inset: 0; }
-
-.gloom {
+.smoke {
   position: absolute;
   inset: 0;
-  background: #05070a;
-  opacity: 0;
-}
-
-.cap {
-  position: fixed;
-  inset: 0;
-  z-index: 1002;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.capPuff {
-  position: absolute;
-  left: var(--eye-x);
-  top: var(--eye-y);
-  width: calc(var(--eye-width, 430px) * 1.9);
-  height: calc(var(--eye-width, 430px) * 1.9);
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(.3);
-}
-
-.capPuff > svg { display: block; width: 100%; height: 100%; overflow: visible; animation: churn 40s linear infinite; }
-.defs { position: absolute; }
-
-.shroud {
-  position: absolute;
-  left: var(--eye-x);
-  top: var(--eye-y);
-  width: 320vmax;
-  height: 320vmax;
-  border-radius: 50%;
-  background: radial-gradient(circle, #05070a 52%, #05070ae6 60%, #05070a00 71%);
-  transform: translate(-50%, -50%) scale(0);
-}
-
-.puff {
-  position: absolute;
-  left: var(--eye-x);
-  top: var(--eye-y);
-  width: 48vmax;
-  height: 48vmax;
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(.04);
-}
-
-.puff > svg {
-  display: block;
   width: 100%;
   height: 100%;
-  overflow: visible;
-  animation: churn var(--churn) linear infinite;
+  display: block;
 }
 
-.puff:nth-child(odd) > svg { animation-direction: reverse; }
-
-.scene[data-access-transition="cover"] .gloom { animation: gloom 3500ms ease-in forwards; }
-.scene[data-access-transition="cover"] .shroud { animation: shroudRise 4400ms cubic-bezier(.45, 0, .35, 1) 900ms forwards; }
-.scene[data-access-transition="cover"] .puff { animation: billow 3500ms cubic-bezier(.33, 0, .25, 1) var(--delay) forwards; }
-.cap[data-access-transition="cover"] .capPuff { animation: capClose 1900ms cubic-bezier(.4, 0, .3, 1) 3900ms forwards; }
-.cap[data-access-transition="covered"] .capPuff { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-.cap[data-access-transition="reveal"] .capPuff { animation: capLift 1200ms ease-out forwards; }
-
-.scene[data-access-transition="covered"] .shroud,
-.scene[data-access-transition="reveal"] .shroud { transform: translate(-50%, -50%) scale(1); }
-
-.scene[data-access-transition="covered"] .puff {
-  opacity: 1;
-  transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin));
-}
-
-.scene[data-access-transition="covered"] .gloom, .scene[data-access-transition="reveal"] .gloom { opacity: 0; }
-.scene[data-access-transition="reveal"] .shroud { animation: shroudThin 2300ms ease-in-out forwards; }
-.scene[data-access-transition="reveal"] .puff { animation: disperse 2200ms cubic-bezier(.4, 0, .3, 1) var(--clear) forwards; }
+/* Without WebGL the smoke degrades to a plain dark fade. */
+.smoke[data-fallback="true"] { background: #05070a; opacity: 0; }
+.smoke[data-fallback="true"][data-access-transition="cover"] { animation: fade 6000ms ease-in forwards; }
+.smoke[data-fallback="true"][data-access-transition="covered"] { opacity: 1; }
+.smoke[data-fallback="true"][data-access-transition="reveal"] { opacity: 1; animation: fade 3100ms ease-out reverse forwards; }
 
 @keyframes eyeSink {
   0%, 10% { opacity: 1; filter: drop-shadow(0 10px 13px #060e131f) grayscale(0) brightness(1) blur(0); transform: scale(1); }
@@ -100,34 +32,8 @@
   100% { opacity: 0; filter: drop-shadow(0 10px 13px #060e1300) grayscale(1) brightness(.5) blur(6px); transform: scale(.96); }
 }
 
-@keyframes gloom { to { opacity: .45; } }
-
-@keyframes capClose {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(.3) rotate(-12deg); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); }
-}
-
-@keyframes capLift { to { opacity: 0; transform: translate(-50%, -50%) scale(1.4); } }
-
-@keyframes shroudRise {
-  to { transform: translate(-50%, -50%) scale(1); }
-}
-
-@keyframes billow {
-  0% { opacity: 0; transform: translate(-50%, -50%) scale(.04) rotate(0); }
-  18% { opacity: 1; }
-  100% { opacity: 1; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin)); }
-}
-
-@keyframes churn { to { transform: rotate(360deg); } }
-
-@keyframes shroudThin { to { opacity: 0; } }
-
-@keyframes disperse {
-  from { opacity: 1; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin)); }
-  to { opacity: 0; transform: translate(-50%, -50%) translate(calc(var(--dx) * 1.9), calc(var(--dy) * 1.9)) scale(calc(var(--scale) * 1.35)) rotate(calc(var(--spin) * 1.6)); }
-}
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .scene, .scene *, .cap, .cap *, .content :global(.hero-eye) { animation: none !important; }
+  .scene *, .content :global(.hero-eye) { animation: none !important; }
 }
