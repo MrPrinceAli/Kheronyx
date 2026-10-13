@@ -1,0 +1,14 @@
+# CLI deploy must never upload local credentials, even though they are ignored by Git.
+.env
+.env.*
+.git/
+node_modules/
+.next/
+*.tsbuildinfo
+tests/
+scripts/
+supabase/
+AGENTS.md
+README.md
+test-results/
+playwright-report/
