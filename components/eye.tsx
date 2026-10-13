@@ -5,7 +5,8 @@ export function Eye({className="",animated=false}:{className?:string;animated?:b
   const opening="M48 161C143 116 230 108 300 119C382 110 469 129 551 163C458 196 376 216 297 213C209 213 125 192 48 161Z";
   const fibers=Array.from({length:64},(_,i)=>{
     const angle=i*Math.PI/32,inner=29+(i%5)*3,outer=69+(i%7)*2;
-    return <path key={i} d={`M${300+Math.cos(angle)*inner} ${162+Math.sin(angle)*inner}L${300+Math.cos(angle+.016)*outer} ${162+Math.sin(angle+.016)*outer}`} stroke={i%3===0?"#969b9e":"#565d60"} strokeWidth={i%4===0?1.3:.6} opacity={i%3===0?.34:.22}/>;
+    const point=(radius:number,theta:number)=>`${(300+Math.cos(theta)*radius).toFixed(3)} ${(162+Math.sin(theta)*radius).toFixed(3)}`;
+    return <path key={i} d={`M${point(inner,angle)}L${point(outer,angle+.016)}`} stroke={i%3===0?"#969b9e":"#565d60"} strokeWidth={i%4===0?1.3:.6} opacity={i%3===0?.34:.22}/>;
   });
   return <svg className={`eye ${styles.eye} ${className} ${animated?styles.animated:""}`} viewBox="0 0 600 300" fill="none" aria-hidden="true">
     <defs>
