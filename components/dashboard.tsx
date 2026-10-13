@@ -10,7 +10,9 @@ import { VirusTotalPanel } from "./virus-total-panel";
 import { updateVirusTotalReport } from "@/lib/virus-total-evidence";
 import type { AppConfig, FileKind, Report, Risk } from "@/lib/types";
 import type { Job } from "@/lib/jobs";
-const riskText:Record<Risk,string>={low:"Indikasi rendah",medium:"Perlu diperhatikan",high:"Risiko tinggi",critical:"Risiko kritis",unknown:"Belum dapat disimpulkan"};
+// Plain labels for non-technical users; the tooltip keeps the honest meaning (static analysis is never a guarantee).
+const riskText:Record<Risk,string>={low:"Aman",medium:"Waspada",high:"Bahaya",critical:"Sangat bahaya",unknown:"Belum pasti"};
+const riskHint:Record<Risk,string>={low:"Tidak ditemukan tanda bahaya. Tetap unduh dari sumber resmi.",medium:"Ada hal mencurigakan. Periksa sebelum membuka atau memasang.",high:"Ditemukan tanda berbahaya. Jangan dibuka atau dipasang.",critical:"Sangat mungkin berbahaya atau penipuan. Hapus file ini.",unknown:"Data belum cukup untuk menilai. Jangan dianggap aman."};
 const riskDescription:Record<Risk,string>={low:"Tidak ditemukan indikasi kuat pada bagian yang diperiksa.",medium:"Ada temuan yang perlu kamu tinjau sebelum membuka file.",high:"Ada indikasi kuat yang perlu diperiksa lebih lanjut.",critical:"Ada indikasi ancaman serius. Hindari membuka atau menginstal file.",unknown:"Informasi yang tersedia belum cukup untuk menilai risiko file."};
 // "17 / 48 MB" while uploading; one decimal only while the whole file is under 10 MB.
 function transferLabel(loaded:number,total:number){const digits=total<10*1024*1024?1:0,mb=(n:number)=>(n/1024/1024).toFixed(digits);return `${mb(Math.min(loaded,total))} / ${mb(total)} MB`;}
@@ -19,7 +21,7 @@ function date(value:string){return new Date(value).toLocaleString("id-ID",{day:"
 function FileIcon({kind,size=22}:{kind:string;size?:number}){return kind==="pdf"?<FileText size={size}/>:kind==="png" || kind==="jpg"?<FileImage size={size}/>:<FileCode2 size={size}/>;}
 const stageText:Record<string,string>={download:"Mengambil file",extract:"Bedah struktur",virustotal:"Memeriksa VirusTotal",ai:"Penilaian AI",save:"Menyimpan laporan"};
 function jobStatusText(job:Job){if(job.status==="failed")return job.error || "Analisis gagal.";if(job.status==="queued")return job.error?`Gagal sementara, dicoba ulang otomatis (${job.attempts}/5)`:"Dalam antrean";return `${stageText[job.stage || ""] || "Memproses"}…${job.attempts>1?` (percobaan ${job.attempts}/5)`:""}`;}
-function RiskBadge({risk}:{risk:Risk}){return <span className={`risk-badge risk-${risk}`}><span className="status-dot"/>{riskText[risk]}</span>;}
+function RiskBadge({risk}:{risk:Risk}){return <span className={`risk-badge risk-${risk}`} title={riskHint[risk]}><span className="status-dot"/>{riskText[risk]}</span>;}
 async function jsonRequest(url:string,options?:RequestInit){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error || "Permintaan gagal.");return data;}
 function uploadFile(url:string,file:File,onProgress:(loaded:number)=>void){return new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open("PUT",url);xhr.setRequestHeader("Content-Type","application/octet-stream");xhr.setRequestHeader("x-upsert","false");xhr.timeout=600000;xhr.upload.onprogress=e=>onProgress(e.loaded);xhr.onload=()=>xhr.status>=200 && xhr.status<300?resolve():reject(new Error("Upload gagal. Coba pilih file kembali."));xhr.onerror=()=>reject(new Error("Koneksi upload terputus."));xhr.ontimeout=()=>reject(new Error("Upload melewati batas waktu."));xhr.send(file);});}
 export function Dashboard({config}:{config:AppConfig}) {
