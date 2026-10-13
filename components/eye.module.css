@@ -10,8 +10,9 @@
   transform-origin: 300px 162px;
 }
 
-.beam {
-  opacity: 0;
+.glare {
+  opacity: .5;
+  transform-origin: 326px 153px;
 }
 
 .shutter {
@@ -23,8 +24,8 @@
   animation: acquireTarget 11.4s cubic-bezier(.45, 0, .25, 1) infinite;
 }
 
-.animated .beam {
-  animation: interrogate 7.8s steps(20, end) infinite;
+.animated .glare {
+  animation: catchLight 6.8s cubic-bezier(.37, 0, .63, 1) infinite;
 }
 
 .animated .shutter {
@@ -39,14 +40,9 @@
   94%, 100% { transform: translate(0, 0); }
 }
 
-@keyframes interrogate {
-  0%, 12% { transform: translateY(14px); opacity: 0; }
-  12.5% { transform: translateY(14px); opacity: .8; }
-  38% { transform: translateY(98px); opacity: .8; }
-  38.5%, 62% { transform: translateY(98px); opacity: 0; }
-  62.5% { transform: translateY(75px); opacity: .5; }
-  80% { transform: translateY(24px); opacity: .5; }
-  80.5%, 100% { transform: translateY(24px); opacity: 0; }
+@keyframes catchLight {
+  0%, 100% { opacity: .35; transform: translate(-1px, 1px) scale(.97); }
+  45%, 60% { opacity: .95; transform: translate(1.5px, -.5px) scale(1.03); }
 }
 
 @keyframes blink {
@@ -57,11 +53,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animated .gaze,
-  .animated .beam,
+  .animated .glare,
   .animated .shutter {
     animation: none;
   }
 
-  .animated .beam { opacity: 0; }
   .animated .shutter { transform: scaleY(0); }
 }

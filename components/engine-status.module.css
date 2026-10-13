@@ -1,0 +1,50 @@
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: #75828e;
+  font: 7px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .6px;
+  line-height: 12px;
+  white-space: nowrap;
+}
+
+.signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.signal i {
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
+  background: currentColor;
+  transform-origin: center;
+}
+
+.signal i:nth-child(2), .signal i:nth-child(4) { height: 9px; }
+.signal i:nth-child(3) { height: 12px; }
+.connected .signal i { animation: signalPulse 1.8s ease-in-out infinite; }
+.connected .signal i:nth-child(1) { animation-delay: -1.2s; }
+.connected .signal i:nth-child(2) { animation-delay: -.9s; }
+.connected .signal i:nth-child(3) { animation-delay: -.6s; }
+.connected .signal i:nth-child(4) { animation-delay: -.3s; }
+.offline { color: #a1a9b2; }
+.offline .signal i { opacity: .4; height: 3px; }
+
+@keyframes signalPulse {
+  0%, 100% { transform: scaleY(.45); opacity: .4; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+@media (max-width: 650px) {
+  .status { margin-top: 7px; font-size: 7px; letter-spacing: .2px; gap: 5px; }
+  .signal { gap: 1px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connected .signal i { animation: none; }
+}

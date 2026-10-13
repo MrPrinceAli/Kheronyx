@@ -13,8 +13,9 @@ export function Eye({className="",animated=false}:{className?:string;animated?:b
       <radialGradient id={`${id}-iris`}><stop stopColor="#030405"/><stop offset=".5" stopColor="#0a0e10"/><stop offset=".76" stopColor="#232a2e"/><stop offset=".93" stopColor="#0b1013"/><stop offset="1" stopColor="#020405"/></radialGradient>
       <linearGradient id={`${id}-sclera`} x1="300" y1="110" x2="300" y2="222" gradientUnits="userSpaceOnUse"><stop stopColor="#434b51"/><stop offset=".48" stopColor="#b4babe"/><stop offset=".76" stopColor="#ced2d3"/><stop offset="1" stopColor="#5b656b"/></linearGradient>
       <linearGradient id={`${id}-shadow`} x1="300" y1="104" x2="300" y2="174" gradientUnits="userSpaceOnUse"><stop stopColor="#020305"/><stop offset=".72" stopColor="#020305" stopOpacity=".65"/><stop offset="1" stopColor="#020305" stopOpacity="0"/></linearGradient>
-      <linearGradient id={`${id}-beam`}><stop stopColor="white" stopOpacity="0"/><stop offset=".34" stopColor="white" stopOpacity=".7"/><stop offset=".5" stopColor="white"/><stop offset=".68" stopColor="white" stopOpacity=".7"/><stop offset="1" stopColor="white" stopOpacity="0"/></linearGradient>
+      <radialGradient id={`${id}-glare`}><stop stopColor="#f5fbff" stopOpacity=".65"/><stop offset=".5" stopColor="#dbe8f0" stopOpacity=".18"/><stop offset="1" stopColor="#dbe8f0" stopOpacity="0"/></radialGradient>
       <clipPath id={`${id}-clip`}><path d={opening}/></clipPath>
+      <clipPath id={`${id}-iris-clip`}><circle cx="300" cy="162" r="81"/></clipPath>
     </defs>
     <path d="M17 161C165 74 401 66 583 162C462 224 373 243 294 235C199 237 111 207 17 161Z" fill="#080a0c"/>
     <path d={opening} fill={`url(#${id}-sclera)`}/>
@@ -27,11 +28,15 @@ export function Eye({className="",animated=false}:{className?:string;animated?:b
         <circle cx="300" cy="162" r="48" stroke="#414b51" strokeWidth="1" strokeDasharray="1 3" opacity=".45"/>
         <path d="M300 108C280 130 280 190 300 216C320 191 320 131 300 108Z" fill="#000"/>
         <path d="M300 120L298 201" stroke="#2d3439" strokeWidth=".6"/>
-        <path d="M330 141L338 139L335 150" stroke="#c7ced1" strokeWidth="1.3" strokeOpacity=".45"/>
         <g className="eye-reticle" stroke="#9ca5aa" strokeWidth=".75" opacity=".38"><path d="M256 141V132H265M335 132H344V141M344 184V193H335M265 193H256V184"/><path d="M300 126V134M300 192V200M254 162H263M337 162H346"/></g>
+        <g className={styles.glare} clipPath={`url(#${id}-iris-clip)`}>
+          <ellipse cx="326" cy="153" rx="27" ry="18" fill={`url(#${id}-glare)`} transform="rotate(-28 326 153)"/>
+          <path d="M310 152C320 142 333 141 342 147C333 144 323 147 314 155Z" fill="#edf5fa" fillOpacity=".65"/>
+          <ellipse cx="326" cy="149" rx="8" ry="3" fill="#fff" fillOpacity=".9" transform="rotate(-24 326 149)"/>
+          <circle cx="340" cy="157" r="1.6" fill="#f3f9fc" fillOpacity=".7"/>
+        </g>
       </g>
       <path d="M25 105H580V175C456 151 381 146 300 144C212 138 120 149 25 178Z" fill={`url(#${id}-shadow)`}/>
-      <g className={styles.beam}><rect x="30" y="112" width="550" height="1.4" fill={`url(#${id}-beam)`}/><rect x="30" y="113.4" width="550" height="9" fill="white" opacity=".045"/><path d="M278 110H289M311 110H322" stroke="white" strokeWidth=".7" opacity=".7"/></g>
       <g className={styles.shutter}><rect x="25" y="105" width="560" height="127" fill="#080a0c"/></g>
     </g>
     <path d="M17 161C165 74 401 66 583 162L551 169C393 105 204 99 48 169Z" fill="#050608"/>

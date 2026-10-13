@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AppWindow, ArrowRight, Eye as EyeIcon, EyeOff, FileImage, FileText, HardDrive, Image as ImageIcon, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Eye } from "./eye";
+import { useAccessTransition } from "./access-transition";
 import styles from "./landing.module.css";
 
 function AndroidIcon({size=13}:{size?:number}) {
@@ -19,16 +19,16 @@ const fileFormats = [
 
 export function Landing() {
   const [open,setOpen]=useState(false),[password,setPassword]=useState(""),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  const input=useRef<HTMLInputElement>(null);const router=useRouter();
+  const input=useRef<HTMLInputElement>(null);const emblem=useRef<HTMLDivElement>(null);const enterDashboard=useAccessTransition();
   useEffect(()=>{if(open)input.current?.focus({preventScroll:true});},[open]);
   async function login(e:React.FormEvent) {
     e.preventDefault();if(busy)return;setBusy(true);setError("");
-    try{const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});const body=await response.json();if(!response.ok)throw new Error(body.error);router.push("/dashboard");router.refresh();}catch(e){setError(e instanceof Error?e.message:"Koneksi terputus. Coba lagi.");setBusy(false);}
+    try{const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});const body=await response.json();if(!response.ok)throw new Error(body.error);input.current?.blur();const source=emblem.current?.querySelector(".hero-eye")?.getBoundingClientRect();await enterDashboard(source);}catch(e){setError(e instanceof Error?e.message:"Koneksi terputus. Coba lagi.");setBusy(false);}
   }
   return <div className={`landing ${styles.page} ${open?styles.loginOpen:""}`}>
     <header className="landing-header"><a href="/" className="wordmark"><span className="brand-symbol"><Eye/></span>KHERONYX<span className="brand-version">/ 01</span></a><span className="private-label"><LockKeyhole size={12}/> PRIVATE ACCESS</span></header>
     <main className="landing-main">
-      <div className="hero-emblem"><div className="eye-aura"/><div className="target-corner top-left"/><div className="target-corner top-right"/><div className="target-corner bottom-left"/><div className="target-corner bottom-right"/>
+      <div ref={emblem} className="hero-emblem"><div className="eye-aura"/><div className="target-corner top-left"/><div className="target-corner top-right"/><div className="target-corner bottom-left"/><div className="target-corner bottom-right"/>
         <span className="emblem-meta">KX · FILE INTELLIGENCE</span><Eye className="hero-eye" animated/><span className="emblem-coordinate">01 / OBSERVE</span>
       </div>
       <div className="hero-copy">
