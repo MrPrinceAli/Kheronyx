@@ -40,6 +40,11 @@ export async function readReport(id: string): Promise<Report | null> {
   if (error) throw new Error("Laporan belum dapat dimuat.");
   return data?.report as Report || null;
 }
+export async function deleteReport(id: string) {
+  const supabase = db(); if (!supabase) return false;
+  const {error} = await supabase.from("kheronyx_reports").delete().eq("id", id);
+  if (error) throw new Error("Riwayat gagal dihapus. Coba lagi."); return true;
+}
 export async function updateReport(report: Report) {
   const supabase = db(); if (!supabase) return false;
   const {data, error} = await supabase.from("kheronyx_reports").update({risk: report.assessment.risk, report}).eq("id", report.id).eq("sha256", report.sha256).select("id").maybeSingle();

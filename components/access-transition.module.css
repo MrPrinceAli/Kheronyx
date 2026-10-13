@@ -1,7 +1,8 @@
-/* The real landing eye rises above the smoke, then sinks into it — no second eye is drawn. */
-.content[data-access-transition="cover"] :global(.landing .hero-eye) {
+/* The real landing eye rises above the smoke, fades to a faint shape, and is swallowed last. */
+.content[data-access-transition="cover"] :global(.landing .hero-eye),
+.content[data-access-transition="covered"] :global(.landing .hero-eye) {
   z-index: 1001;
-  animation: eyeSink 1400ms cubic-bezier(.55, 0, .45, 1) forwards;
+  animation: eyeSink 6000ms ease-in-out forwards;
 }
 
 .scene {
@@ -14,6 +15,33 @@
 }
 
 .smoke { position: absolute; inset: 0; }
+
+.gloom {
+  position: absolute;
+  inset: 0;
+  background: #05070a;
+  opacity: 0;
+}
+
+.cap {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.capPuff {
+  position: absolute;
+  left: var(--eye-x);
+  top: var(--eye-y);
+  width: calc(var(--eye-width, 430px) * 1.9);
+  height: calc(var(--eye-width, 430px) * 1.9);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.3);
+}
+
+.capPuff > svg { display: block; width: 100%; height: 100%; overflow: visible; animation: churn 40s linear infinite; }
 .defs { position: absolute; }
 
 .shroud {
@@ -47,8 +75,12 @@
 
 .puff:nth-child(odd) > svg { animation-direction: reverse; }
 
-.scene[data-access-transition="cover"] .shroud { animation: shroudRise 1350ms cubic-bezier(.5, 0, .3, 1) 120ms forwards; }
-.scene[data-access-transition="cover"] .puff { animation: billow 1050ms cubic-bezier(.2, .7, .3, 1) var(--delay) forwards; }
+.scene[data-access-transition="cover"] .gloom { animation: gloom 3500ms ease-in forwards; }
+.scene[data-access-transition="cover"] .shroud { animation: shroudRise 4400ms cubic-bezier(.45, 0, .35, 1) 900ms forwards; }
+.scene[data-access-transition="cover"] .puff { animation: billow 3500ms cubic-bezier(.33, 0, .25, 1) var(--delay) forwards; }
+.cap[data-access-transition="cover"] .capPuff { animation: capClose 1900ms cubic-bezier(.4, 0, .3, 1) 3900ms forwards; }
+.cap[data-access-transition="covered"] .capPuff { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.cap[data-access-transition="reveal"] .capPuff { animation: capLift 1200ms ease-out forwards; }
 
 .scene[data-access-transition="covered"] .shroud,
 .scene[data-access-transition="reveal"] .shroud { transform: translate(-50%, -50%) scale(1); }
@@ -58,13 +90,24 @@
   transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(var(--scale)) rotate(var(--spin));
 }
 
-.scene[data-access-transition="reveal"] .shroud { animation: shroudThin 800ms ease-out forwards; }
-.scene[data-access-transition="reveal"] .puff { animation: disperse 900ms cubic-bezier(.3, .1, .3, 1) var(--clear) forwards; }
+.scene[data-access-transition="covered"] .gloom, .scene[data-access-transition="reveal"] .gloom { opacity: 0; }
+.scene[data-access-transition="reveal"] .shroud { animation: shroudThin 2300ms ease-in-out forwards; }
+.scene[data-access-transition="reveal"] .puff { animation: disperse 2200ms cubic-bezier(.4, 0, .3, 1) var(--clear) forwards; }
 
 @keyframes eyeSink {
-  0%, 35% { opacity: 1; filter: drop-shadow(0 10px 13px #060e131f) blur(0); transform: scale(1); }
-  100% { opacity: 0; filter: drop-shadow(0 10px 13px #060e1300) blur(7px); transform: scale(.95); }
+  0%, 10% { opacity: 1; filter: drop-shadow(0 10px 13px #060e131f) grayscale(0) brightness(1) blur(0); transform: scale(1); }
+  45%, 66% { opacity: .55; filter: drop-shadow(0 10px 13px #060e1300) grayscale(.7) brightness(.72) blur(1.2px); transform: scale(.99); }
+  100% { opacity: 0; filter: drop-shadow(0 10px 13px #060e1300) grayscale(1) brightness(.5) blur(6px); transform: scale(.96); }
 }
+
+@keyframes gloom { to { opacity: .45; } }
+
+@keyframes capClose {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(.3) rotate(-12deg); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); }
+}
+
+@keyframes capLift { to { opacity: 0; transform: translate(-50%, -50%) scale(1.4); } }
 
 @keyframes shroudRise {
   to { transform: translate(-50%, -50%) scale(1); }
@@ -86,5 +129,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scene, .scene *, .content :global(.hero-eye) { animation: none !important; }
+  .scene, .scene *, .cap, .cap *, .content :global(.hero-eye) { animation: none !important; }
 }
