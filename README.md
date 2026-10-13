@@ -48,7 +48,7 @@ Run `supabase/migrations/202610130001_kheronyx.sql` against the selected project
 
 Uploads go directly to a **private quarantine bucket** using server-issued signed upload URLs, avoiding Vercel's request-body limit. The server binds object paths to the authenticated session, checks file signatures and size, and deletes uploads after analysis. A daily Vercel cron deletes abandoned uploads older than 24 hours (typically removed within 48 hours) and reports older than 30 days. Set a random `CRON_SECRET` in Vercel for the cleanup route. Stored reports are accessible only through authenticated server routes; there are no public table/storage policies.
 
-Limits: 40 MB per file with storage, 10 MB for PDF, 4 MB for direct upload without storage. 20 analyses per authenticated session per hour, 12 upload URLs per ten minutes, 8 password attempts per IP per 15 minutes. Rate counters persist in Supabase when configured; local fallback is process memory.
+Limits: 250 MB per file (PDF 50 MB) with Vercel Blob (`BLOB_READ_WRITE_TOKEN`, private store; browser uploads go straight to Blob in multipart), 40 MB with Supabase Storage only, 4 MB for direct upload without storage. Files above 50 MB are capped at 30 per 30 days to stay inside the Hobby Blob transfer allowance; VirusTotal upload is skipped above 100 MB (hash lookup only). 20 analyses per authenticated session per hour, 12 upload URLs per ten minutes, 8 password attempts per IP per 15 minutes. Rate counters persist in Supabase when configured; local fallback is process memory.
 
 ## What the analysis does
 

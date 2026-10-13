@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Artifact, FileKind } from "./types";
 import { readZip, unzipEntry } from "./zip";
 import { androidManifest } from "./axml";
-export const MAX_BYTES = 40 * 1024 * 1024;
+import { KIND_LIMITS, formatMB } from "./limits";
 export function fileKind(filename: string): FileKind {
   const ext = filename.split(".").pop()?.toLowerCase();
   if (ext === "jpeg") return "jpg";
@@ -126,8 +126,7 @@ async function pdf(buffer:Buffer,a:Artifact) {
   } finally {await task.destroy();}
 }
 export async function extractFile(buffer:Buffer,filename:string):Promise<Artifact> {
-  const kind=fileKind(filename); if(!buffer.length || buffer.length>MAX_BYTES)throw new Error("Ukuran file harus antara 1 byte dan 40 MB.");
-  if(kind==="pdf" && buffer.length>10*1024*1024)throw new Error("PDF maksimal 10 MB untuk analisis versi ini.");
+  const kind=fileKind(filename); if(!buffer.length || buffer.length>KIND_LIMITS[kind])throw new Error(`Ukuran file ${kind.toUpperCase()} harus antara 1 byte dan ${formatMB(KIND_LIMITS[kind])}.`);
   validateSignature(buffer,kind);
   const a:Artifact={filename:filename.replace(/[\x00-\x1f\x7f]/g,"").slice(0,180),kind,size:buffer.length,sha256:createHash("sha256").update(buffer).digest("hex"),metadata:{},strings:printableStrings(buffer),urls:[],indicators:[],limitations:[],incomplete:false};
   try {if(kind==="pdf")await pdf(buffer,a);else if(kind==="exe")pe(buffer,a);else if(kind==="apk")apk(buffer,a);else if(kind==="png")png(buffer,a);else jpg(buffer,a);}catch{a.incomplete=true;a.limitations.push("Struktur internal tidak berhasil dibaca sepenuhnya; hasil tidak boleh dianggap aman.");}

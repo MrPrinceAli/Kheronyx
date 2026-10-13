@@ -26,6 +26,7 @@ class ProviderError extends Error {
   constructor(public status: "not_found" | "rate_limited" | "error", message: string) { super(message); }
 }
 
+const VT_UPLOAD_MAX = 100 * 1024 * 1024;
 function initial(sha256: string): VirusTotalResult {
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("Hash SHA-256 tidak valid.");
   return {
@@ -135,6 +136,8 @@ export async function inspectVirusTotal(artifact: Artifact, buffer: Buffer, uplo
     catch (error) {
       if (!(error instanceof ProviderError) || error.status !== "not_found" || !uploadUnknown) return failed(error, result);
     }
+    // Uploading hundreds of MB to VirusTotal cannot finish inside the provider timeout; rely on the hash lookup.
+    if (buffer.length > VT_UPLOAD_MAX) return { ...result, status: "not_found", message: "File belum dikenal VirusTotal dan terlalu besar (di atas 100 MB) untuk diunggah otomatis." };
     const url = buffer.length > 32 * 1024 * 1024 ? trustedUploadUrl((await api.request(`${BASE}/files/upload_url`)).data) : `${BASE}/files`;
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(buffer)], { type: "application/octet-stream" }), `${artifact.sha256}.${artifact.kind}`);

@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 import { sameOrigin, sessionId } from "@/lib/auth";
 import { aiConfigured, assess } from "@/lib/ai";
 import { bucketName, db, rateLimit, saveReport } from "@/lib/db";
-import { extractFile, MAX_BYTES } from "@/lib/extract";
+import { extractFile, fileKind } from "@/lib/extract";
+import { blobConfigured, quarantinePath, readBlob, removeBlob } from "@/lib/blob";
+import { KIND_LIMITS, sizeLimits } from "@/lib/limits";
 import { inspectVirusTotal } from "@/lib/virustotal";
 import type { Report } from "@/lib/types";
 export const runtime="nodejs";
-export const maxDuration=240;
+export const maxDuration=300;
 export async function POST(request:Request) {
   const session=await sessionId();if(!session)return NextResponse.json({error:"Login diperlukan."},{status:401});
   if(!sameOrigin(request))return NextResponse.json({error:"Permintaan ditolak."},{status:403});
@@ -18,13 +20,17 @@ export async function POST(request:Request) {
     let buffer:Buffer,filename:string,uploadVirusTotal=false;
     if(request.headers.get("content-type")?.includes("application/json")) {
       const body=await request.json();path=body.path;filename=body.filename;uploadVirusTotal=body.uploadVirusTotal===true;
-      if(typeof path!=="string" || typeof filename!=="string" || filename.length>200 || !new RegExp(`^${session}/[a-f0-9-]{36}\\.(pdf|apk|exe|png|jpg)$`).test(path)){path=undefined;throw new Error("Referensi upload tidak valid.");}
-      const supabase=db();if(!supabase)throw new Error("Storage belum terhubung.");
-      const {data:info,error:infoError}=await supabase.storage.from(bucketName()).info(path);
-      if(infoError || !info)throw new Error("File tidak ditemukan. Upload ulang.");
-      if(Number(info.size || info.metadata?.size || 0)>MAX_BYTES)throw new Error("File melebihi batas 40 MB.");
-      const {data,error}=await supabase.storage.from(bucketName()).download(path);
-      if(error || !data)throw new Error("File belum dapat diambil. Upload ulang.");buffer=Buffer.from(await data.arrayBuffer());
+      if(typeof filename!=="string" || filename.length>200 || !quarantinePath(session,path)){path=undefined;throw new Error("Referensi upload tidak valid.");}
+      const kind=fileKind(filename);if(!path.endsWith(`.${kind}`))throw new Error("Referensi upload tidak valid.");
+      if(blobConfigured())buffer=await readBlob(path,KIND_LIMITS[kind]);
+      else {
+        const supabase=db();if(!supabase)throw new Error("Storage belum terhubung.");
+        const {data:info,error:infoError}=await supabase.storage.from(bucketName()).info(path);
+        if(infoError || !info)throw new Error("File tidak ditemukan. Upload ulang.");
+        if(Number(info.size || info.metadata?.size || 0)>sizeLimits("supabase")[kind])throw new Error("File melebihi batas storage.");
+        const {data,error}=await supabase.storage.from(bucketName()).download(path);
+        if(error || !data)throw new Error("File belum dapat diambil. Upload ulang.");buffer=Buffer.from(await data.arrayBuffer());
+      }
     }else {
       if(Number(request.headers.get("content-length")||0)>4*1024*1024+10000)throw new Error("Tanpa storage, batas upload langsung adalah 4 MB.");
       const body=await request.formData();const file=body.get("file");uploadVirusTotal=body.get("uploadVirusTotal")==="true";
@@ -38,5 +44,8 @@ export async function POST(request:Request) {
     try{persisted=await saveReport(report);}catch(error){warning=error instanceof Error?error.message:"Laporan gagal disimpan.";}
     return NextResponse.json({report,persisted,warning},{headers:{"Cache-Control":"no-store"}});
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Analisis gagal. Tidak ada kesimpulan keamanan yang dibuat."},{status:400});}
-  finally{if(path && db()){const {error}=await db()!.storage.from(bucketName()).remove([path]);if(error)console.error("Kheronyx quarantine cleanup failed; scheduled retention cleanup will retry.");}}
+  finally{
+    if(path && blobConfigured())await removeBlob(path).catch(()=>console.error("Kheronyx quarantine cleanup failed; scheduled retention cleanup will retry."));
+    else if(path && db()){const {error}=await db()!.storage.from(bucketName()).remove([path]);if(error)console.error("Kheronyx quarantine cleanup failed; scheduled retention cleanup will retry.");}
+  }
 }

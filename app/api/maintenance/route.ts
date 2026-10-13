@@ -1,14 +1,16 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { bucketName, db } from "@/lib/db";
+import { blobConfigured, cleanupBlobs } from "@/lib/blob";
 export const maxDuration=60;
 export async function GET(request:Request) {
   const secret=process.env.CRON_SECRET;
   const supplied=createHash("sha256").update(request.headers.get("authorization") || "").digest();
   const expected=createHash("sha256").update(`Bearer ${secret || ""}`).digest();
   if(!secret || !timingSafeEqual(supplied,expected))return NextResponse.json({error:"Unauthorized"},{status:401});
-  const supabase=db();if(!supabase)return NextResponse.json({skipped:true});
   const cutoff=Date.now()-24*3600*1000;let deleted=0;
+  if(blobConfigured()){try{deleted+=await cleanupBlobs(cutoff);}catch{return NextResponse.json({error:"Blob cleanup failed"},{status:500});}}
+  const supabase=db();if(!supabase)return NextResponse.json({deleted});
   // Bounded scheduled cleanup catches abandoned signed uploads. Successful scans delete immediately.
   const {data:folders,error}=await supabase.storage.from(bucketName()).list("",{limit:500});
   if(error)return NextResponse.json({error:"Cleanup failed"},{status:500});
