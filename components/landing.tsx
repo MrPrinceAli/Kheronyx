@@ -1,8 +1,22 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Eye as EyeIcon, EyeOff, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
+import { AppWindow, ArrowRight, Eye as EyeIcon, EyeOff, FileImage, FileText, HardDrive, Image as ImageIcon, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Eye } from "./eye";
+import styles from "./landing.module.css";
+
+function AndroidIcon({size=13}:{size?:number}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m7 5-2-3m12 3 2-3M4 12a8 8 0 0 1 16 0v6H4zM8 18v4m8-4v4M1 12v5m22-5v5"/><path d="M8 9h.01M16 9h.01" strokeWidth="2.5"/></svg>;
+}
+
+const fileFormats = [
+  {extension:"pdf",Icon:FileText},
+  {extension:"apk",Icon:AndroidIcon},
+  {extension:"exe",Icon:AppWindow},
+  {extension:"png",Icon:FileImage},
+  {extension:"jpg",Icon:ImageIcon},
+];
+
 export function Landing() {
   const [open,setOpen]=useState(false),[password,setPassword]=useState(""),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const input=useRef<HTMLInputElement>(null);const router=useRouter();
@@ -11,7 +25,7 @@ export function Landing() {
     e.preventDefault();if(busy)return;setBusy(true);setError("");
     try{const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});const body=await response.json();if(!response.ok)throw new Error(body.error);router.push("/dashboard");router.refresh();}catch(e){setError(e instanceof Error?e.message:"Koneksi terputus. Coba lagi.");setBusy(false);}
   }
-  return <div className="landing">
+  return <div className={`landing ${styles.page} ${open?styles.loginOpen:""}`}>
     <header className="landing-header"><a href="/" className="wordmark"><span className="brand-symbol"><Eye/></span>KHERONYX<span className="brand-version">/ 01</span></a><span className="private-label"><LockKeyhole size={12}/> PRIVATE ACCESS</span></header>
     <main className="landing-main">
       <div className="hero-emblem"><div className="eye-aura"/><div className="target-corner top-left"/><div className="target-corner top-right"/><div className="target-corner bottom-left"/><div className="target-corner bottom-right"/>
@@ -31,6 +45,6 @@ export function Landing() {
         {open && <form id="login-form" className="login-form" onSubmit={login}><label htmlFor="password">Password akses</label><div className={`password-field ${error?"field-error":""}`}><input id="password" ref={input} type={visible?"text":"password"} autoComplete="current-password" placeholder="Masukkan password" value={password} onChange={e=>setPassword(e.target.value)} maxLength={256} required/><button type="button" className="icon-button" onClick={()=>setVisible(!visible)} aria-label={visible?"Sembunyikan password":"Tampilkan password"}>{visible?<EyeOff size={16}/>:<EyeIcon size={16}/>}</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<button className="button button-dark" disabled={busy || !password}>{busy?<Loader2 size={16} className="spin"/>:<ArrowRight size={16}/>} {busy?"Memeriksa akses…":"Masuk ke dashboard"}</button><span className="login-caption"><ShieldCheck size={12}/>Akses privat. Tanpa akun tambahan.</span></form>}
       </div>
     </main>
-    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{["PDF","APK","EXE","PNG","JPG"].map(type=><span className="format-tag" key={type}>.{type.toLowerCase()}</span>)}<span className="format-tag format-soon">.dmg <span>coming soon</span></span></div><span className="footer-copyright">© 2026 Kheronyx</span></footer>
+    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><span className="footer-copyright">© 2026 Kheronyx</span></footer>
   </div>;
 }
