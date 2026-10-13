@@ -27,6 +27,8 @@
 
 .signal i:nth-child(2), .signal i:nth-child(4) { height: 9px; }
 .signal i:nth-child(3) { height: 12px; }
+.connected { color: var(--green); }
+.connected .signal { filter: drop-shadow(0 0 3px #26845e59); }
 .connected .signal i { animation: signalPulse 1.8s ease-in-out infinite; }
 .connected .signal i:nth-child(1) { animation-delay: -1.2s; }
 .connected .signal i:nth-child(2) { animation-delay: -.9s; }

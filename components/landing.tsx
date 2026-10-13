@@ -39,7 +39,7 @@ export function Landing() {
           <span className="hero-feature hero-feature-ai"><img className="hero-feature-logo" src="/openai.svg" width={12} height={12} alt="" aria-hidden="true"/>GPT-6 Astra Assisted</span>
         </div>
         <h1>Kheronyx<span className="title-dot">.</span></h1>
-        <p className="hero-tagline">See beneath the surface.</p>
+        <p className="hero-tagline">Revealing the hidden depth.</p>
         <p className="builder">build by <TypedHandle/></p>
       </div>
       <div className="login-area"><button className={`button button-dark login-toggle ${open?"is-open":""}`} onClick={()=>setOpen(!open)} aria-expanded={open} aria-controls="login-form"><LockKeyhole size={16}/>Login<ArrowRight size={16}/></button>
