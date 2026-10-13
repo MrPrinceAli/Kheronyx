@@ -32,6 +32,25 @@
 
 .front { position: fixed; z-index: 1002; }
 
+.wait {
+  position: fixed;
+  inset: 0;
+  z-index: 1003;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: .2em;
+  color: #c4ccd4;
+  text-shadow: 0 0 12px #9fb3c440;
+  opacity: 0;
+}
+
+.wait[data-access-transition="cover"] { animation: fade 600ms ease-out 4000ms forwards; }
+.wait[data-access-transition="covered"] { opacity: 1; }
+.wait[data-access-transition="reveal"] { opacity: 1; animation: fade 450ms ease-in reverse forwards; }
+
 /* Without WebGL the smoke degrades to a plain dark fade (back layer only). */
 .smoke[data-layer="back"][data-fallback="true"] { background: #05070a; opacity: 0; }
 .smoke[data-layer="back"][data-fallback="true"][data-access-transition="cover"] { animation: fade 6000ms ease-in forwards; }

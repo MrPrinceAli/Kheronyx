@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { usePathname, useRouter } from "next/navigation";
 import styles from "./access-transition.module.css";
 import { SmokeCanvas } from "./smoke-canvas";
+import { TypedHandle } from "./typed-handle";
 
 type EyeOrigin = { left: number; top: number; width: number; height: number };
 // Entering: cover → covered (route swap) → reveal. Leaving: leave → away (route swap) → arrive.
@@ -13,6 +14,8 @@ const TransitionContext = createContext<Transitions | null>(null);
 // Slow, gloomy pacing: the smoke takes the page first and swallows the eye last.
 const COVER_MS = 6000;
 const REVEAL_MS = 3100;
+// The smoke is near-opaque from about here on, so "Please Wait..." can appear.
+const WAIT_AT_MS = 4000;
 // Logout is a quick slide back to the landing page.
 const LEAVE_MS = 420;
 const ARRIVE_MS = 560;
@@ -96,6 +99,8 @@ export function AccessTransition({children}:{children:ReactNode}) {
         <SmokeCanvas layer="back" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
       </div>
       <SmokeCanvas layer="front" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
+      {/* Fades in once the smoke has swallowed the page; typing starts as it appears. */}
+      <div className={styles.wait} data-access-transition={smoke}><TypedHandle text="Please Wait..." startDelay={WAIT_AT_MS} hold={2400} pace={.5}/></div>
     </>}
   </TransitionContext.Provider>;
 }

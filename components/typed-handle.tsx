@@ -7,7 +7,8 @@ const GLYPHS = "!<>-_/\\[]{}=+*^?#$%01";
 
 // Types the handle like a terminal: each character scrambles through glyphs before it locks in,
 // holds with a blinking cursor, backspaces, then loops.
-export function TypedHandle({text="./Viclatess"}:{text?:string}) {
+// `pace` scales every delay (below 1 types faster).
+export function TypedHandle({text="./Viclatess",startDelay=700,hold=6500,pace=1}:{text?:string;startDelay?:number;hold?:number;pace?:number}) {
   const [typed,setTyped] = useState({length:0,glyph:""});
 
   useEffect(() => {
@@ -18,17 +19,17 @@ export function TypedHandle({text="./Viclatess"}:{text?:string}) {
     const tick = () => {
       if (erasing) {
         length--; setTyped({length,glyph:""});
-        if (length === 0) { erasing = false; timer = setTimeout(tick, 650); } else timer = setTimeout(tick, 38);
+        if (length === 0) { erasing = false; timer = setTimeout(tick, 650*pace); } else timer = setTimeout(tick, 38*pace);
         return;
       }
-      if (length === text.length) { erasing = true; timer = setTimeout(tick, 6500); return; }
-      if (scramble < 3) { scramble++; setTyped({length,glyph:glyph()}); timer = setTimeout(tick, 32); return; }
+      if (length === text.length) { erasing = true; timer = setTimeout(tick, hold); return; }
+      if (scramble < 3) { scramble++; setTyped({length,glyph:glyph()}); timer = setTimeout(tick, 32*pace); return; }
       scramble = 0; length++; setTyped({length,glyph:""});
-      timer = setTimeout(tick, 60+Math.random()*110);
+      timer = setTimeout(tick, (60+Math.random()*110)*pace);
     };
-    timer = setTimeout(tick, 700);
+    timer = setTimeout(tick, startDelay);
     return () => clearTimeout(timer);
-  }, [text]);
+  }, [text, startDelay, hold, pace]);
 
   return <span className={styles.handle}>
     <span className="visually-hidden">{text}</span>
