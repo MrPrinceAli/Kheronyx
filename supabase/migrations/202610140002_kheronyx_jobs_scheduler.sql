@@ -1,7 +1,6 @@
--- NOT APPLIED AUTOMATICALLY: needs the owner to create the shared secret first.
---   1. Vercel: add env var JOBS_SECRET (Production) with a long random value, then redeploy.
---   2. Supabase SQL editor: select vault.create_secret('<same value>', 'kheronyx_jobs_secret');
---   3. Run this file.
+-- Requires the shared secret first (both already set up for production):
+--   1. Vercel env var JOBS_SECRET (all environments).
+--   2. Supabase Vault secret 'kheronyx_jobs_secret' with the same value.
 -- Retry scheduler. The secret is stored in Vault as 'kheronyx_jobs_secret' (same value as JOBS_SECRET on
 -- Vercel); the endpoint is only called when a job is actually waiting, so idle minutes cost nothing.
 create extension if not exists pg_net;

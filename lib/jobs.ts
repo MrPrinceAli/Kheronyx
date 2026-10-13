@@ -22,6 +22,12 @@ export function jobsConfigured() { return blobConfigured() && storageConfigured(
 const toJob = (row: Row): Job => ({id: row.id, createdAt: row.created_at, filename: row.filename, kind: row.kind, size: row.size, status: row.status, stage: row.stage, attempts: row.attempts, retryAt: row.status === "queued" ? row.locked_until : null, error: row.error, reportId: row.report_id});
 const client = () => { const supabase = db(); if (!supabase) throw new Error("Storage belum terhubung."); return supabase; };
 const update = async (id: string, fields: Partial<Row>) => { await client().from(TABLE).update({...fields, updated_at: new Date().toISOString()}).eq("id", id); };
+// Cancelling deletes the job row; the worker notices at its next stage change and stops without saving.
+class CancelledError extends Error {}
+const advance = async (id: string, stage: AnalysisStage) => {
+  const {data} = await client().from(TABLE).update({stage, updated_at: new Date().toISOString()}).eq("id", id).select("id");
+  if (!data?.length) throw new CancelledError();
+};
 
 export async function createJob(input: {path: string; filename: string; kind: FileKind; size: number; uploadVirusTotal: boolean}) {
   const id = randomUUID();
@@ -46,10 +52,10 @@ export async function retryJob(id: string) {
   return Boolean(data?.length);
 }
 
+// Removes a failed job, or cancels a queued/running one (its worker stops at the next stage).
 export async function deleteJob(id: string) {
-  const {data} = await client().from(TABLE).select("path, status").eq("id", id).maybeSingle();
+  const {data} = await client().from(TABLE).select("path").eq("id", id).maybeSingle();
   if (!data) return false;
-  if (data.status === "running") throw new Error("Analisis sedang berjalan. Tunggu hingga selesai atau gagal.");
   await removeBlob(data.path).catch(() => {});
   await client().from(TABLE).delete().eq("id", id);
   return true;
@@ -64,19 +70,20 @@ async function claim(id?: string) {
 // Runs one claimed job to completion. Returns the time a transient failure may be retried, if any.
 async function runClaimed(row: Row): Promise<number | null> {
   try {
-    await update(row.id, {stage: "download"});
+    await advance(row.id, "download");
     const buffer = await readBlob(row.path, KIND_LIMITS[row.kind]).catch(error => {
       if (error instanceof Error && /tidak ditemukan|melebihi batas/.test(error.message)) throw new PermanentError(error.message);
       throw error;
     });
     // The report reuses the job id, so a retry after a crash overwrites instead of duplicating.
-    const report = await analyzeBuffer(buffer, row.filename, row.upload_virustotal, {id: row.id, onStage: stage => update(row.id, {stage})});
-    await update(row.id, {stage: "save"});
+    const report = await analyzeBuffer(buffer, row.filename, row.upload_virustotal, {id: row.id, onStage: stage => advance(row.id, stage)});
+    await advance(row.id, "save");
     await saveReport(report);
     await update(row.id, {status: "done", stage: null, locked_until: null, error: null, report_id: report.id});
     await removeBlob(row.path).catch(() => {});
     return null;
   } catch (error) {
+    if (error instanceof CancelledError) return null;
     const message = error instanceof Error ? error.message : "Analisis gagal.";
     if (error instanceof PermanentError || row.attempts >= MAX_ATTEMPTS) {
       await update(row.id, {status: "failed", locked_until: null, error: row.attempts >= MAX_ATTEMPTS && !(error instanceof PermanentError) ? `${message} Percobaan otomatis sudah habis.` : message});
