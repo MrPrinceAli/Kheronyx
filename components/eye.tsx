@@ -1,26 +1,41 @@
 import { useId } from "react";
+import styles from "./eye.module.css";
 export function Eye({className="",animated=false}:{className?:string;animated?:boolean}) {
   const id=useId().replace(/:/g,"");
-  return <svg className={`eye ${className} ${animated?"eye-animated":""}`} viewBox="0 0 600 300" fill="none" aria-hidden="true">
+  const opening="M48 161C143 116 230 108 300 119C382 110 469 129 551 163C458 196 376 216 297 213C209 213 125 192 48 161Z";
+  const fibers=Array.from({length:64},(_,i)=>{
+    const angle=i*Math.PI/32,inner=29+(i%5)*3,outer=69+(i%7)*2;
+    return <path key={i} d={`M${300+Math.cos(angle)*inner} ${162+Math.sin(angle)*inner}L${300+Math.cos(angle+.016)*outer} ${162+Math.sin(angle+.016)*outer}`} stroke={i%3===0?"#969b9e":"#565d60"} strokeWidth={i%4===0?1.3:.6} opacity={i%3===0?.34:.22}/>;
+  });
+  return <svg className={`eye ${styles.eye} ${className} ${animated?styles.animated:""}`} viewBox="0 0 600 300" fill="none" aria-hidden="true">
     <defs>
-      <radialGradient id={`${id}-iris`}><stop stopColor="#080a0c"/><stop offset=".55" stopColor="#1c2228"/><stop offset=".8" stopColor="#080a0c"/><stop offset="1" stopColor="#51575c"/></radialGradient>
-      <linearGradient id={`${id}-lid`} x1="300" y1="62" x2="300" y2="245" gradientUnits="userSpaceOnUse"><stop stopColor="#080b0e"/><stop offset=".6" stopColor="#151a1e"/><stop offset="1" stopColor="#737a7f"/></linearGradient>
-      <linearGradient id={`${id}-beam`}><stop stopColor="white" stopOpacity="0"/><stop offset=".5" stopColor="white" stopOpacity=".8"/><stop offset="1" stopColor="white" stopOpacity="0"/></linearGradient>
-      <clipPath id={`${id}-clip`}><path d="M50 151C132 83 206 62 300 62C394 62 468 83 550 151C465 213 391 237 300 237C209 237 135 213 50 151Z"/></clipPath>
+      <radialGradient id={`${id}-iris`}><stop stopColor="#030405"/><stop offset=".5" stopColor="#0a0e10"/><stop offset=".76" stopColor="#232a2e"/><stop offset=".93" stopColor="#0b1013"/><stop offset="1" stopColor="#020405"/></radialGradient>
+      <linearGradient id={`${id}-sclera`} x1="300" y1="110" x2="300" y2="222" gradientUnits="userSpaceOnUse"><stop stopColor="#434b51"/><stop offset=".48" stopColor="#b4babe"/><stop offset=".76" stopColor="#ced2d3"/><stop offset="1" stopColor="#5b656b"/></linearGradient>
+      <linearGradient id={`${id}-shadow`} x1="300" y1="104" x2="300" y2="174" gradientUnits="userSpaceOnUse"><stop stopColor="#020305"/><stop offset=".72" stopColor="#020305" stopOpacity=".65"/><stop offset="1" stopColor="#020305" stopOpacity="0"/></linearGradient>
+      <linearGradient id={`${id}-beam`}><stop stopColor="white" stopOpacity="0"/><stop offset=".34" stopColor="white" stopOpacity=".7"/><stop offset=".5" stopColor="white"/><stop offset=".68" stopColor="white" stopOpacity=".7"/><stop offset="1" stopColor="white" stopOpacity="0"/></linearGradient>
+      <clipPath id={`${id}-clip`}><path d={opening}/></clipPath>
     </defs>
-    <path d="M36 152C131 66 207 47 300 47C395 47 469 66 564 152C468 226 391 254 300 254C207 254 132 226 36 152Z" fill={`url(#${id}-lid)`}/>
-    <path d="M52 151C136 94 207 73 300 73C393 73 464 94 548 151C465 196 390 220 300 220C210 220 135 196 52 151Z" fill="#e9eced"/>
+    <path d="M17 161L69 122C148 77 240 74 306 95C398 75 496 105 583 162L550 182C462 224 373 243 294 235C199 237 111 207 17 161Z" fill="#080a0c"/>
+    <path d={opening} fill={`url(#${id}-sclera)`}/>
     <g clipPath={`url(#${id}-clip)`}>
-      <circle cx="300" cy="148" r="88" fill={`url(#${id}-iris)`}/>
-      <circle cx="300" cy="148" r="78" stroke="#8b9295" strokeOpacity=".24" strokeWidth=".8"/>
-      <circle cx="300" cy="148" r="68" stroke="#adb2b4" strokeOpacity=".15" strokeWidth="1.5" strokeDasharray="2 4"/>
-      <circle cx="300" cy="148" r="55" stroke="#a7acad" strokeOpacity=".12" strokeWidth="10" strokeDasharray="1 5"/>
-      <circle cx="300" cy="148" r="34" fill="#020304"/>
-      <circle cx="283" cy="124" r="9" fill="#e2e6e7" opacity=".65"/>
-      <circle cx="305" cy="109" r="3" fill="#e2e6e7" opacity=".45"/>
-      <g className="scan-beam"><rect x="45" y="45" width="510" height="4" fill={`url(#${id}-beam)`}/><rect x="45" y="49" width="510" height="24" fill="white" opacity=".035"/></g>
+      <g className={styles.gaze}>
+        <circle cx="300" cy="162" r="84" fill={`url(#${id}-iris)`}/>
+        <circle cx="300" cy="162" r="79" stroke="#010203" strokeWidth="5"/>
+        <circle cx="300" cy="162" r="72" stroke="#768085" strokeWidth=".8" strokeOpacity=".25"/>
+        {fibers}
+        <circle cx="300" cy="162" r="48" stroke="#414b51" strokeWidth="1" strokeDasharray="1 3" opacity=".45"/>
+        <path d="M300 108C280 130 280 190 300 216C320 191 320 131 300 108Z" fill="#000"/>
+        <path d="M300 120L298 201" stroke="#2d3439" strokeWidth=".6"/>
+        <path d="M330 141L338 139L335 150" stroke="#c7ced1" strokeWidth="1.3" strokeOpacity=".45"/>
+        <g className="eye-reticle" stroke="#9ca5aa" strokeWidth=".75" opacity=".38"><path d="M256 141V132H265M335 132H344V141M344 184V193H335M265 193H256V184"/><path d="M300 126V134M300 192V200M254 162H263M337 162H346"/></g>
+      </g>
+      <path d="M25 105H580V175C456 151 381 146 300 144C212 138 120 149 25 178Z" fill={`url(#${id}-shadow)`}/>
+      <g className={styles.beam}><rect x="30" y="112" width="550" height="1.4" fill={`url(#${id}-beam)`}/><rect x="30" y="113.4" width="550" height="9" fill="white" opacity=".045"/><path d="M278 110H289M311 110H322" stroke="white" strokeWidth=".7" opacity=".7"/></g>
+      <g className={styles.shutter}><rect x="25" y="105" width="560" height="127" fill="#080a0c"/></g>
     </g>
-    <path d="M36 152C137 65 211 50 300 50C389 50 463 65 564 152" stroke="#080a0d" strokeWidth="10" strokeLinecap="round"/>
-    <path d="M68 169C155 230 223 247 300 247C377 247 445 230 532 169" stroke="#a5abad" strokeOpacity=".24" strokeWidth="2"/>
+    <path d="M17 161L76 119C168 78 238 88 306 109C399 91 493 120 583 162L551 169C455 131 380 119 300 127C226 114 139 124 48 169Z" fill="#050608"/>
+    <path d="M54 178C157 223 231 237 298 231C387 238 474 211 550 179" stroke="#444d53" strokeWidth="1.2"/>
+    <path d="M75 96L153 76L248 89M373 90L443 90L518 120" stroke="#101419" strokeWidth="2" strokeLinecap="square"/>
+    <path d="M42 198L100 216M501 211L563 184" stroke="#788189" strokeWidth=".7" opacity=".4"/>
   </svg>;
 }

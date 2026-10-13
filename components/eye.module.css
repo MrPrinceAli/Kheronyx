@@ -1,0 +1,67 @@
+.eye {
+  overflow: visible;
+}
+
+.eye.animated {
+  filter: drop-shadow(0 14px 15px #03060942);
+}
+
+.gaze {
+  transform-origin: 300px 162px;
+}
+
+.beam {
+  opacity: 0;
+}
+
+.shutter {
+  transform: scaleY(0);
+  transform-origin: 300px 109px;
+}
+
+.animated .gaze {
+  animation: acquireTarget 11.4s steps(1, end) infinite;
+}
+
+.animated .beam {
+  animation: interrogate 7.8s steps(20, end) infinite;
+}
+
+.animated .shutter {
+  animation: blink 13.6s linear infinite;
+}
+
+@keyframes acquireTarget {
+  0%, 27% { transform: translate(0, 0); }
+  27.4%, 44% { transform: translate(17px, -2px); }
+  44.4%, 71% { transform: translate(-12px, 1px); }
+  71.4%, 88% { transform: translate(-4px, 0); }
+  88.4%, 100% { transform: translate(0, 0); }
+}
+
+@keyframes interrogate {
+  0%, 12% { transform: translateY(14px); opacity: 0; }
+  12.5% { transform: translateY(14px); opacity: .8; }
+  38% { transform: translateY(98px); opacity: .8; }
+  38.5%, 62% { transform: translateY(98px); opacity: 0; }
+  62.5% { transform: translateY(75px); opacity: .5; }
+  80% { transform: translateY(24px); opacity: .5; }
+  80.5%, 100% { transform: translateY(24px); opacity: 0; }
+}
+
+@keyframes blink {
+  0%, 67.8% { transform: scaleY(0); }
+  68.2%, 68.5% { transform: scaleY(1); }
+  69.1%, 100% { transform: scaleY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated .gaze,
+  .animated .beam,
+  .animated .shutter {
+    animation: none;
+  }
+
+  .animated .beam { opacity: 0; }
+  .animated .shutter { transform: scaleY(0); }
+}
