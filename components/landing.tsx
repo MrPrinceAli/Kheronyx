@@ -17,7 +17,16 @@ export function Landing() {
       <div className="hero-emblem"><div className="eye-aura"/><div className="target-corner top-left"/><div className="target-corner top-right"/><div className="target-corner bottom-left"/><div className="target-corner bottom-right"/>
         <span className="emblem-meta">KX · FILE INTELLIGENCE</span><Eye className="hero-eye" animated/><span className="emblem-coordinate">01 / OBSERVE</span>
       </div>
-      <div className="hero-copy"><div className="eyebrow"><span className="status-dot"/> STATIC INTELLIGENCE · AI ASSISTED</div><h1>Kheronyx<span className="title-dot">.</span></h1><p className="hero-tagline">See beneath the surface.</p><p className="hero-description">Kenali isi file. Pahami risikonya.</p><p className="builder">build by <span>./Viclatess</span></p></div>
+      <div className="hero-copy">
+        <div className="eyebrow hero-features">
+          <span className="hero-feature"><ScanLine size={12} strokeWidth={1.5} aria-hidden="true"/>STATIC INTELLIGENCE</span>
+          <span className="hero-feature-divider" aria-hidden="true">·</span>
+          <span className="hero-feature hero-feature-ai"><img className="hero-feature-logo" src="/openai.svg" width={12} height={12} alt="" aria-hidden="true"/>GPT-6 Astra Assisted</span>
+        </div>
+        <h1>Kheronyx<span className="title-dot">.</span></h1>
+        <p className="hero-tagline">See beneath the surface.</p>
+        <p className="builder">build by <span>./Viclatess</span></p>
+      </div>
       <div className="login-area"><button className={`button button-dark login-toggle ${open?"is-open":""}`} onClick={()=>setOpen(!open)} aria-expanded={open} aria-controls="login-form"><LockKeyhole size={16}/>Login<ArrowRight size={16}/></button>
         {open && <form id="login-form" className="login-form" onSubmit={login}><label htmlFor="password">Password akses</label><div className={`password-field ${error?"field-error":""}`}><input id="password" ref={input} type={visible?"text":"password"} autoComplete="current-password" placeholder="Masukkan password" value={password} onChange={e=>setPassword(e.target.value)} maxLength={256} required/><button type="button" className="icon-button" onClick={()=>setVisible(!visible)} aria-label={visible?"Sembunyikan password":"Tampilkan password"}>{visible?<EyeOff size={16}/>:<EyeIcon size={16}/>}</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<button className="button button-dark" disabled={busy || !password}>{busy?<Loader2 size={16} className="spin"/>:<ArrowRight size={16}/>} {busy?"Memeriksa akses…":"Masuk ke dashboard"}</button><span className="login-caption"><ShieldCheck size={12}/>Akses privat. Tanpa akun tambahan.</span></form>}
       </div>

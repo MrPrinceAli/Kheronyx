@@ -18,3 +18,11 @@
 .hero-emblem .eye-aura{width:80%;height:42%;left:10%;top:38%;background:radial-gradient(ellipse,#10151c4f 0%,#0b111a24 42%,transparent 72%);filter:blur(22px);border-radius:40%}
 .hero-emblem .target-corner{width:12px;height:12px;border-color:#929ca7}
 .hero-emblem .emblem-meta,.hero-emblem .emblem-coordinate{color:#8b949e}
+
+.hero-copy .hero-features{flex-wrap:wrap;gap:9px;font-size:8px;letter-spacing:1.2px}
+.hero-feature{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.hero-feature>svg{color:#727d87}
+.hero-feature-logo{display:block;flex-shrink:0}
+.hero-feature-ai{letter-spacing:.5px}
+.hero-feature-divider{color:#a5adb5}
+@media(max-width:400px){.hero-copy .hero-features{column-gap:10px;row-gap:7px;font-size:7px;letter-spacing:.8px}.hero-feature-ai{letter-spacing:.2px}.hero-feature>svg,.hero-feature-logo{width:11px;height:11px}}
