@@ -43,7 +43,7 @@ export async function clearRateLimit(key: string) {
 }
 export async function saveReport(report: Report) {
   const supabase = db(); if (!supabase) return false;
-  const {error} = await supabase.from("kheronyx_reports").insert({id: report.id, created_at: report.createdAt, filename: report.filename, kind: report.kind, size: report.size, sha256: report.sha256, risk: report.assessment.risk, report});
+  const {error} = await supabase.from("kheronyx_reports").upsert({id: report.id, created_at: report.createdAt, filename: report.filename, kind: report.kind, size: report.size, sha256: report.sha256, risk: report.assessment.risk, report}, {onConflict: "id"});
   if (error) throw new Error("Laporan selesai tetapi gagal disimpan. Unduh laporan untuk menyimpannya."); return true;
 }
 export async function listReports() {

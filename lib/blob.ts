@@ -30,6 +30,11 @@ export async function readBlob(pathname: string, maxBytes: number) {
   return buffer;
 }
 
+export async function blobSize(pathname: string) {
+  const meta = await head(pathname).catch(() => null);
+  return meta?.size ?? null;
+}
+
 export async function removeBlob(pathname: string) { await del(pathname); }
 
 export async function cleanupBlobs(cutoff: number) {

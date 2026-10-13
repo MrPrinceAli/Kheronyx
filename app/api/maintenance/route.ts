@@ -21,6 +21,8 @@ export async function GET(request:Request) {
     const paths=(files || []).filter(f=>f.id && new Date(f.created_at || "").getTime()<cutoff).map(f=>`${folder.name}/${f.name}`);
     if(paths.length){const {error:removeError}=await supabase.storage.from(bucketName()).remove(paths);if(!removeError)deleted+=paths.length;}
   }
+  // Finished and failed jobs only matter for a few days; their reports live in kheronyx_reports.
+  await supabase.from("kheronyx_jobs").delete().in("status",["done","failed"]).lt("updated_at",new Date(Date.now()-7*24*3600*1000).toISOString());
   const {error:reportError}=await supabase.from("kheronyx_reports").delete().lt("created_at",new Date(Date.now()-30*24*3600*1000).toISOString());
   return NextResponse.json({deleted,reportRetentionOk:!reportError});
 }
