@@ -11,8 +11,9 @@ export function db() {
   return client;
 }
 const counters = new Map<string, {count: number; reset: number}>();
+const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
 export async function rateLimit(key: string, limit: number, seconds: number) {
-  const hashed = createHash("sha256").update(key).digest("hex");
+  const hashed = hashKey(key);
   const supabase = db();
   if (supabase) {
     const {data, error} = await supabase.rpc("kheronyx_rate_limit", {p_key: hashed, p_limit: limit, p_window_seconds: seconds});
@@ -23,6 +24,22 @@ export async function rateLimit(key: string, limit: number, seconds: number) {
   for (const [k,v] of counters) if (v.reset <= now) counters.delete(k);
   const current = counters.get(hashed) || {count: 0, reset: now + seconds * 1000};
   current.count++; counters.set(hashed, current); return current.count <= limit;
+}
+// Reports whether `key` already reached `limit` in its current window, without counting this request.
+export async function rateLimited(key: string, limit: number) {
+  const hashed = hashKey(key);
+  const supabase = db();
+  if (supabase) {
+    const {data, error} = await supabase.from("kheronyx_rate_limits").select("count, reset_at").eq("key", hashed).maybeSingle();
+    if (error) throw new Error("Layanan pembatasan permintaan belum siap. Coba lagi nanti.");
+    return Boolean(data && new Date(data.reset_at).getTime() > Date.now() && data.count >= limit);
+  }
+  const current = counters.get(hashed);
+  return Boolean(current && current.reset > Date.now() && current.count >= limit);
+}
+export async function clearRateLimit(key: string) {
+  const hashed = hashKey(key); counters.delete(hashed);
+  await db()?.from("kheronyx_rate_limits").delete().eq("key", hashed);
 }
 export async function saveReport(report: Report) {
   const supabase = db(); if (!supabase) return false;
