@@ -98,7 +98,9 @@ export function AccessTransition({children}:{children:ReactNode}) {
         <span className="visually-hidden">Opening your workspace…</span>
         <SmokeCanvas layer="back" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
       </div>
-      <SmokeCanvas layer="front" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
+      {/* The front layer only exists to swallow the landing eye. Once the page is fully dark the eye is gone,
+          and keeping it would leave a darker, eye-shaped patch while the smoke clears. */}
+      {smoke === "cover" && <SmokeCanvas layer="front" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>}
       {/* Fades in once the smoke has swallowed the page; typing starts as it appears. */}
       <div className={styles.wait} data-access-transition={smoke}><TypedHandle text="Please Wait..." startDelay={WAIT_AT_MS} hold={2400} pace={.5}/></div>
     </>}
