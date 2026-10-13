@@ -2,6 +2,8 @@
 
 A private, minimal file intelligence workspace. Landing page + password-only analysis dashboard. Supports PDF, APK, EXE, PNG, JPG/JPEG; DMG is coming soon.
 
+Production: https://kheronyx.vercel.app · Repository: https://github.com/MrPrinceAli/Kheronyx (private). Supabase resources are installed in the user-selected `pelita` project, under Kheronyx-specific names. The AI key is intentionally left for the owner to supply.
+
 ## Run locally
 
 ```sh
