@@ -13,10 +13,10 @@ const RESOLUTION = .5;
 const VERTEX = `attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}`;
 
 // Domain-warped fractal noise (fbm of fbm) gives billowing, tendril-edged smoke instead of round puffs.
-// uCover grows the smoke outward from behind the eye, leaving a soft hole around it that closes last;
-// uReveal tears the smoke apart into wisps, clearing from the eye outward.
+// uCover grows the smoke outward from the eye's outline; the page eye is raised between the back and the
+// front layer, so smoke appears to pour from behind it and the front layer swallows it last. uReveal tears the smoke apart into wisps, clearing from the eye outward.
 const FRAGMENT = `precision highp float;
-uniform vec2 uRes;uniform vec2 uOrigin;uniform vec2 uEye;uniform float uTime;uniform float uCover;uniform float uReveal;
+uniform vec2 uRes;uniform vec2 uOrigin;uniform vec2 uEye;uniform float uTime;uniform float uCover;uniform float uReveal;uniform float uLayer;
 float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
 float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);}
@@ -31,22 +31,34 @@ void main(){
   vec2 r=vec2(fbm(drift+2.5*q+vec2(1.7,9.2)+t*.7),fbm(drift+2.5*q+vec2(8.3,2.8)-t*.5));
   float n=fbm(drift+2.6*r);
   float d=length(p*vec2(1.,1.18));
+  vec2 e=(frag-uOrigin)/uEye;
+  // Distance outside the eye's outline, so the smoke is born at its edges (behind it) rather than at a point;
+  // plumes above the eye rise faster than the rest.
+  float ring=max(length(e)-.82,0.)*length(uEye)/scale*.75;
+  ring*=1.-.4*smoothstep(0.,.45,-p.y);
   float reach=length(max(uOrigin,uRes-uOrigin))/scale+.6;
   float front=uCover*reach;
-  float edge=d-(n-.5)*.75-(r.x-.5)*.45;
+  float edge=ring-(n-.5)*.75-(r.x-.5)*.45;
   float cover=1.-smoothstep(front-.38,front,edge);
   float body=smoothstep(.15,.9,n*.75+r.y*.45);
   float smoke=max(cover*mix(.84,1.,body),smoothstep(.8,.98,uCover));
-  vec2 e=(frag-uOrigin)/uEye;
-  float close=smoothstep(.45,.97,uCover);
-  float holeRadius=mix(.95,.0,close);
-  // Wisps from both warp layers chew the hole's edge so it never reads as an oval.
-  float ragged=length(e)+(n-.5)*1.5+(r.x-.5)*.9+(q.y-.5)*.6;
-  float hole=(1.-smoothstep(holeRadius*.35,holeRadius+.25,ragged))*(1.-close);
-  // The gloom dims the whole page, the eye included, so the hole never reads as a bright halo;
-  // inside the hole a thin veil of the smoke itself stays visible.
-  float gloom=min(uCover*1.6,1.)*.42;
-  float alpha=max(smoke*(1.-hole*.7),gloom);
+  float alpha;
+  if(uLayer<.5){
+    // Back layer sits under the raised landing eye; the gloom dims the page around it.
+    alpha=max(smoke,min(uCover*1.6,1.)*.42);
+  }else{
+    // Front layer only covers the eye's own silhouette (the back layer already shows everything around it),
+    // so nothing doubles up: ragged smoke creeps in from the lids and corners until the eye is swallowed.
+    float close=smoothstep(.55,.97,uCover);
+    // Almond traced from the eye SVG (viewBox 600x300): corners at x=±.94, lids at y=.075∓.47/.49.
+    float u=e.x/.94,w=clamp(1.-u*u,0.,1.);
+    float top=.075-.47*w,bottom=.075+.49*w;
+    float silhouette=smoothstep(-.04,.04,e.y-top)*smoothstep(-.04,.04,bottom-e.y)*(1.-smoothstep(.97,1.03,abs(u)));
+    float ragged=length(vec2(u,(e.y-.075)/.48))+(n-.5)*1.1+(r.x-.5)*.6+(q.y-.5)*.4;
+    float closing=mix(1.25,-.45,close);
+    float veil=smoothstep(closing-.25,closing+.12,ragged)*silhouette*smoothstep(0.,.1,close);
+    alpha=smoke*veil;
+  }
   // Reveal: broad, slow-moving holes tear the smoke apart from the eye outward while it thins overall.
   float vr=fbm(p*1.1+r*1.3+vec2(t*.8,-t))*.85+d*.32;
   float sweep=uReveal*1.8-.45;
@@ -61,7 +73,7 @@ void main(){
 
 const ease = (x: number) => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3)/2;
 
-export function SmokeCanvas({phase, origin, coverMs, revealMs}:{phase:SmokePhase;origin:SmokeOrigin;coverMs:number;revealMs:number}) {
+export function SmokeCanvas({layer, phase, origin, startedAt, coverMs, revealMs}:{layer:"back"|"front";phase:SmokePhase;origin:SmokeOrigin;startedAt:number;coverMs:number;revealMs:number}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const phaseRef = useRef(phase);
   const revealStart = useRef(0);
@@ -88,9 +100,10 @@ export function SmokeCanvas({phase, origin, coverMs, revealMs}:{phase:SmokePhase
     const position = gl.getAttribLocation(program, "a");
     gl.enableVertexAttribArray(position); gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
     const uniform = (name: string) => gl.getUniformLocation(program, name);
-    const [uRes, uOrigin, uEye, uTime, uCover, uReveal] = ["uRes","uOrigin","uEye","uTime","uCover","uReveal"].map(uniform);
+    const [uRes, uOrigin, uEye, uTime, uCover, uReveal, uLayer] = ["uRes","uOrigin","uEye","uTime","uCover","uReveal","uLayer"].map(uniform);
 
-    const start = performance.now(); let frame = 0;
+    // Both layers share the transition start time so their noise fields line up exactly.
+    const start = startedAt; let frame = 0;
     const draw = (now: number) => {
       const width = Math.max(1, Math.round(innerWidth*RESOLUTION)), height = Math.max(1, Math.round(innerHeight*RESOLUTION));
       if (element.width !== width || element.height !== height) { element.width = width; element.height = height; gl.viewport(0, 0, width, height); }
@@ -99,17 +112,20 @@ export function SmokeCanvas({phase, origin, coverMs, revealMs}:{phase:SmokePhase
       const reveal = current === "reveal" ? Math.min((now-revealStart.current)/revealMs, 1) : 0;
       gl.uniform2f(uRes, width, height);
       gl.uniform2f(uOrigin, (origin.left+origin.width/2)*RESOLUTION, (origin.top+origin.height/2)*RESOLUTION);
-      gl.uniform2f(uEye, origin.width/2*RESOLUTION, origin.height/2*RESOLUTION);
+      // The eye SVG keeps its 2:1 viewBox inside the element box, so use the drawn size, not the box.
+      const drawn = Math.min(origin.width/600, origin.height/300);
+      gl.uniform2f(uEye, 300*drawn*RESOLUTION, 150*drawn*RESOLUTION);
       gl.uniform1f(uTime, (now-start)/1000);
       gl.uniform1f(uCover, cover);
       gl.uniform1f(uReveal, reveal);
+      gl.uniform1f(uLayer, layer === "front" ? 1 : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
     // No loseContext() here: React may re-run this effect on the same canvas, which would get the dead context back.
     return () => { cancelAnimationFrame(frame); gl.deleteProgram(program); };
-  }, [origin, coverMs, revealMs]);
+  }, [layer, origin, startedAt, coverMs, revealMs]);
 
-  return <canvas ref={canvas} className={styles.smoke} data-access-transition={phase} aria-hidden="true"/>;
+  return <canvas ref={canvas} className={`${styles.smoke} ${layer === "front" ? styles.front : ""}`} data-layer={layer} data-access-transition={phase} aria-hidden="true"/>;
 }

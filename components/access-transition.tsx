@@ -6,16 +6,23 @@ import styles from "./access-transition.module.css";
 import { SmokeCanvas } from "./smoke-canvas";
 
 type EyeOrigin = { left: number; top: number; width: number; height: number };
-type Phase = "idle" | "cover" | "covered" | "reveal";
-const TransitionContext = createContext<((origin?: EyeOrigin) => Promise<void>) | null>(null);
+// Entering: cover → covered (route swap) → reveal. Leaving: leave → away (route swap) → arrive.
+type Phase = "idle" | "cover" | "covered" | "reveal" | "leave" | "away" | "arrive";
+type Transitions = { enter: (origin?: EyeOrigin) => Promise<void>; leave: () => Promise<void> };
+const TransitionContext = createContext<Transitions | null>(null);
 // Slow, gloomy pacing: the smoke takes the page first and swallows the eye last.
 const COVER_MS = 6000;
 const REVEAL_MS = 3100;
+// Logout is a quick slide back to the landing page.
+const LEAVE_MS = 420;
+const ARRIVE_MS = 560;
+
 export function AccessTransition({children}:{children:ReactNode}) {
   const router = useRouter();
   const pathname = usePathname();
   const [phase, setPhase] = useState<Phase>("idle");
   const [origin, setOrigin] = useState<EyeOrigin>();
+  const [startedAt, setStartedAt] = useState(0);
   const flight = useRef<{resolve:()=>void;reject:(error:Error)=>void} | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deadline = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,32 +36,45 @@ export function AccessTransition({children}:{children:ReactNode}) {
     if (error) current?.reject(error); else current?.resolve();
   }, []);
 
-  const enter = useCallback((source?: EyeOrigin) => {
-    if (flight.current) return Promise.resolve();
+  // Plays the outro phase, swaps the route while hidden, and lets the pathname effect below play the intro.
+  const travel = useCallback((to: string, outro: Phase, hidden: Phase, outroMs: number, failure: string) => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      router.push("/dashboard"); router.refresh(); return Promise.resolve();
+      router.push(to); router.refresh(); return Promise.resolve();
     }
-    setOrigin(source || {left:innerWidth/2-160,top:innerHeight/2-80,width:320,height:160});
-    setPhase("cover");
+    setPhase(outro);
     return new Promise<void>((resolve,reject) => {
       flight.current = {resolve,reject};
       timer.current = setTimeout(() => {
-        setPhase("covered");
-        try { router.push("/dashboard"); router.refresh(); }
-        catch { finish(new Error("Dashboard belum dapat dibuka. Coba lagi.")); return; }
-        deadline.current = setTimeout(() => finish(new Error("Dashboard belum merespons. Coba masuk kembali.")), 12000);
-      }, COVER_MS);
+        setPhase(hidden);
+        try { router.push(to); router.refresh(); }
+        catch { finish(new Error(failure)); return; }
+        deadline.current = setTimeout(() => finish(new Error(failure)), 12000);
+      }, outroMs);
     });
   }, [router, finish]);
 
+  const enter = useCallback((source?: EyeOrigin) => {
+    if (flight.current) return Promise.resolve();
+    setOrigin(source || {left:innerWidth/2-160,top:innerHeight/2-80,width:320,height:160});
+    setStartedAt(performance.now());
+    return travel("/dashboard", "cover", "covered", COVER_MS, "Dashboard belum merespons. Coba masuk kembali.");
+  }, [travel]);
+
+  const leave = useCallback(() => {
+    if (flight.current) return Promise.resolve();
+    return travel("/", "leave", "away", LEAVE_MS, "Halaman awal belum merespons. Muat ulang halaman.");
+  }, [travel]);
+
   useEffect(() => {
-    if (pathname !== "/dashboard" || phase !== "covered") return;
+    const next = phase === "covered" && pathname === "/dashboard" ? {phase: "reveal" as const, ms: REVEAL_MS}
+      : phase === "away" && pathname === "/" ? {phase: "arrive" as const, ms: ARRIVE_MS} : null;
+    if (!next) return;
     if (deadline.current) clearTimeout(deadline.current);
-    // The persistent smoke stays opaque until the new route has committed and painted.
+    // Stay hidden until the new route has committed and painted.
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
-        setPhase("reveal");
-        timer.current = setTimeout(() => finish(), REVEAL_MS);
+        setPhase(next.phase);
+        timer.current = setTimeout(() => finish(), next.ms);
       });
     });
     return () => cancelAnimationFrame(frame);
@@ -66,18 +86,25 @@ export function AccessTransition({children}:{children:ReactNode}) {
   }, []);
 
   const active = phase !== "idle";
+  const smoke = phase === "cover" || phase === "covered" || phase === "reveal" ? phase : null;
 
-  return <TransitionContext.Provider value={enter}>
+  return <TransitionContext.Provider value={{enter, leave}}>
     <div className={styles.content} data-access-transition={phase} inert={active}>{children}</div>
-    {phase !== "idle" && origin && <div className={styles.scene} role="status" aria-live="polite">
-      <span className="visually-hidden">Opening your workspace…</span>
-      <SmokeCanvas phase={phase} origin={origin} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
-    </div>}
+    {smoke && origin && <>
+      <div className={styles.scene} role="status" aria-live="polite">
+        <span className="visually-hidden">Opening your workspace…</span>
+        <SmokeCanvas layer="back" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
+      </div>
+      <SmokeCanvas layer="front" phase={smoke} origin={origin} startedAt={startedAt} coverMs={COVER_MS} revealMs={REVEAL_MS}/>
+    </>}
   </TransitionContext.Provider>;
 }
 
-export function useAccessTransition() {
-  const transition = useContext(TransitionContext);
-  if (!transition) throw new Error("Access transition provider is missing.");
-  return transition;
+function useTransitions() {
+  const transitions = useContext(TransitionContext);
+  if (!transitions) throw new Error("Access transition provider is missing.");
+  return transitions;
 }
+
+export function useAccessTransition() { return useTransitions().enter; }
+export function useLeaveTransition() { return useTransitions().leave; }

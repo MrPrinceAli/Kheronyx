@@ -1,9 +1,18 @@
-/* The real landing eye stays in place under the smoke: it fades to a faint shape while the smoke
-   leaves a hole around it, and is swallowed last when that hole closes. */
+/* The real landing eye is raised between the back smoke layer (z 1000) and the front one (z 1002):
+   smoke pours out from behind it, it fades to a faint shape, and the front layer swallows it last. */
 .content[data-access-transition="cover"] :global(.landing .hero-eye),
 .content[data-access-transition="covered"] :global(.landing .hero-eye) {
+  z-index: 1001;
   animation: eyeSink 6000ms ease-in-out forwards;
 }
+
+/* Logout: the dashboard slides away to the right, the landing page slides in from the left. */
+.content[data-access-transition="leave"],
+.content[data-access-transition="away"],
+.content[data-access-transition="arrive"] { overflow-x: clip; }
+.content[data-access-transition="leave"] > * { animation: slideAway 420ms cubic-bezier(.5, 0, .75, .3) forwards; }
+.content[data-access-transition="away"] > * { opacity: 0; }
+.content[data-access-transition="arrive"] > * { animation: slideIn 560ms cubic-bezier(.2, .8, .3, 1) both; }
 
 .scene {
   position: fixed;
@@ -14,17 +23,20 @@
 
 .smoke {
   position: absolute;
+  pointer-events: none;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
 }
 
-/* Without WebGL the smoke degrades to a plain dark fade. */
-.smoke[data-fallback="true"] { background: #05070a; opacity: 0; }
-.smoke[data-fallback="true"][data-access-transition="cover"] { animation: fade 6000ms ease-in forwards; }
-.smoke[data-fallback="true"][data-access-transition="covered"] { opacity: 1; }
-.smoke[data-fallback="true"][data-access-transition="reveal"] { opacity: 1; animation: fade 3100ms ease-out reverse forwards; }
+.front { position: fixed; z-index: 1002; }
+
+/* Without WebGL the smoke degrades to a plain dark fade (back layer only). */
+.smoke[data-layer="back"][data-fallback="true"] { background: #05070a; opacity: 0; }
+.smoke[data-layer="back"][data-fallback="true"][data-access-transition="cover"] { animation: fade 6000ms ease-in forwards; }
+.smoke[data-layer="back"][data-fallback="true"][data-access-transition="covered"] { opacity: 1; }
+.smoke[data-layer="back"][data-fallback="true"][data-access-transition="reveal"] { opacity: 1; animation: fade 3100ms ease-out reverse forwards; }
 
 @keyframes eyeSink {
   0%, 10% { opacity: 1; filter: drop-shadow(0 10px 13px #060e131f) grayscale(0) brightness(1) blur(0); transform: scale(1); }
@@ -33,7 +45,9 @@
 }
 
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideAway { to { opacity: 0; transform: translateX(28%); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-22%); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .scene *, .content :global(.hero-eye) { animation: none !important; }
+  .scene *, .content *, .content :global(.hero-eye) { animation: none !important; }
 }
