@@ -11,6 +11,7 @@
     "deploy": "node scripts/sync-vercel-env.mjs && vercel deploy --prod --yes"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
     "@supabase/supabase-js": "^2.0.0",
     "@vercel/blob": "^2.8.1",
     "adm-zip": "^0.5.16",

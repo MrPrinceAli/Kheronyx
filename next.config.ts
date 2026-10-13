@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
-  serverExternalPackages: ["pdfjs-dist", "adm-zip"],
-  outputFileTracingIncludes: {"/api/analyze": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"]},
+  serverExternalPackages: ["pdfjs-dist", "adm-zip", "@napi-rs/canvas"],
+  // pdf.js needs @napi-rs/canvas (DOMMatrix/Path2D) under Node and loads it with a dynamic require that
+  // file tracing cannot see; without it the pdf.js import throws "DOMMatrix is not defined" on Vercel.
+  outputFileTracingIncludes: {"/api/analyze": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", "./node_modules/@napi-rs/canvas/**", "./node_modules/@napi-rs/canvas-linux-*/**"]},
   poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: [
