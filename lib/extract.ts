@@ -329,7 +329,7 @@ export async function extractFile(buffer:Buffer,filename:string):Promise<Artifac
   a.strings=[...new Set(a.strings.map(redactSecrets))].slice(0,500);
   a.urls=[...new Set([...a.urls,...a.strings.flatMap(s=>s.match(/https?:\/\/[^\s<>"'\\]{4,300}/g)||[])].map(redactSecrets))].slice(0,60);
   a.indicators=a.indicators.map(i=>({name:i.name,evidence:redactSecrets(i.evidence)}));
-  a.limitations.push("Ini analisis statis berbantuan AI, tanpa antivirus, sandbox eksekusi, atau pencarian reputasi eksternal. Malware baru dan payload tersembunyi dapat terlewat.");
+  a.limitations.push("Ini analisis statis berbantuan AI tanpa sandbox eksekusi; reputasi hanya dari VirusTotal dan abuse.ch bila tersedia. Malware baru dan payload tersembunyi dapat terlewat.");
   let sampled=false;
   function bounded(value:unknown,depth=0):unknown {
     if(depth>7){sampled=true;return "[Depth limit]";}
@@ -339,7 +339,7 @@ export async function extractFile(buffer:Buffer,filename:string):Promise<Artifac
     return value;
   }
   a.metadata=bounded(a.metadata) as Record<string,unknown>;
-  // Keep the AI evidence (see assess(): 120k chars incl. VirusTotal) comfortably bounded even for samples that trip every rule.
+  // Keep the AI evidence (see assess(): 120k chars incl. VirusTotal and threatIntel, ≤6k + ≤8 indicators of ≤400 chars) comfortably bounded even for samples that trip every rule.
   const evidenceSize=()=>JSON.stringify({...a,strings:a.strings.slice(0,180),urls:a.urls.slice(0,40)}).length;
   if(evidenceSize()>100000){
     sampled=true; a.strings=a.strings.map(s=>s.slice(0,120)); a.indicators=a.indicators.slice(0,40).map(i=>({name:i.name,evidence:i.evidence.slice(0,300)}));

@@ -13,6 +13,15 @@ export type VirusTotalResult = {
   stats?: VirusTotalStats;
   detections?: {engine: string; category: "malicious" | "suspicious"; result: string | null}[];
 };
+// External reputation (abuse.ch MalwareBazaar/URLhaus/ThreatFox, RDAP domain age). Only hits are listed; hosts = what was checked.
+export type ThreatIntelResult = {
+  checkedAt: string; hosts: string[];
+  malwareBazaar?: {family: string | null; tags: string[]; firstSeen?: string; fileType?: string; delivery?: string; vendors?: string[]; reference?: string} | null;
+  urlhaus: {target: string; kind: "host" | "url"; status?: string; urlCount?: number; online?: number; threats?: string[]; tags?: string[]; blacklists?: string[]; families?: string[]; firstSeen?: string; reference?: string}[];
+  threatfox: {term: string; family: string | null; threatType?: string; confidence?: number; firstSeen?: string; matches: number; reference?: string}[];
+  domains: {domain: string; registered?: string; expires?: string; ageDays?: number; registrar?: string}[];
+  skipped?: string[]; errors?: string[];
+};
 export const assessmentSchema = z.object({
   risk: z.enum(riskLevels),
   confidence: z.enum(["low", "medium", "high"]),
@@ -31,7 +40,7 @@ export type Artifact = {
   filename: string; kind: FileKind; size: number; sha256: string;
   metadata: Record<string, unknown>; strings: string[]; urls: string[];
   indicators: {name: string; evidence: string}[];
-  limitations: string[]; incomplete: boolean; virusTotal?: VirusTotalResult;
+  limitations: string[]; incomplete: boolean; virusTotal?: VirusTotalResult; threatIntel?: ThreatIntelResult;
 };
 export type Report = {
   id: string; createdAt: string; filename: string; kind: FileKind; size: number;
