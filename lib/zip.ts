@@ -37,6 +37,20 @@ function entryData(buffer: Buffer, entry: ZipEntry) {
   if (start + entry.compressedSize > buffer.length) throw new Error("Bagian APK terpotong.");
   return buffer.subarray(start, start + entry.compressedSize);
 }
+// BadPack-style manifests lie about their ZIP sizes and zero the AXML chunk type, yet Android still reads them.
+// Looks for the real binary-XML header (header size 8 + a plausible total size) right around the entry's data and
+// returns a repaired copy, or null when nothing credible is there.
+export function salvageBinaryXml(buffer: Buffer, entry: ZipEntry, maxBytes: number) {
+  const p = entry.offset; if (p + 30 > buffer.length || buffer.readUInt32LE(p) !== 0x04034b50) return null;
+  const start = p + 30 + buffer.readUInt16LE(p + 26) + buffer.readUInt16LE(p + 28);
+  for (let at = Math.max(p + 30, start - 8); at <= start + 8 && at + 8 <= buffer.length; at++) {
+    const type = buffer.readUInt16LE(at), header = buffer.readUInt16LE(at + 2), size = buffer.readUInt32LE(at + 4);
+    if ((type === 3 || type === 0) && header === 8 && size >= 64 && size <= maxBytes && at + size <= buffer.length && buffer.readUInt16LE(at + 8) === 1) {
+      const copy = Buffer.from(buffer.subarray(at, at + size)); copy.writeUInt16LE(3, 0); return copy;
+    }
+  }
+  return null;
+}
 // First bytes of an entry without inflating all of it (magic/entropy sniffing). Output is capped even for bomb-like streams.
 export function zipHead(buffer: Buffer, entry: ZipEntry, bytes = 65536) {
   const data = entryData(buffer, entry);
@@ -47,9 +61,10 @@ export function zipHead(buffer: Buffer, entry: ZipEntry, bytes = 65536) {
 export function unzipEntry(buffer: Buffer, entry: ZipEntry, maxBytes: number) {
   if (entry.size > maxBytes) throw new Error("Bagian APK terlalu besar untuk dibedah.");
   const data = entryData(buffer, entry);
-  // Unknown methods with equal sizes are read as stored (Android does the same; used as an anti-analysis trick).
+  // Android only distinguishes stored from deflated, so malware ("BadPack") writes junk method numbers to break
+  // analysis tools: unknown methods with equal sizes are read as stored, otherwise as deflate.
   let output: Buffer | null = null;
-  try {output = entry.method === 8 ? inflateRawSync(data, {maxOutputLength: maxBytes}) : entry.method === 0 || entry.compressedSize === entry.size ? data : null;} catch (error) {if (!(entry.flags & 1)) throw error;}
+  try {output = entry.method === 0 || entry.method !== 8 && entry.compressedSize === entry.size ? data : inflateRawSync(data, {maxOutputLength: maxBytes});} catch (error) {if (!(entry.flags & 1)) throw error;}
   if (!output || output.length !== entry.size || output.length > maxBytes) throw new Error(entry.flags & 1 ? "Bagian APK terenkripsi." : "Kompresi atau ukuran bagian APK tidak valid.");
   return output;
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants, inflateSync } from "node:zlib";
 import type { Artifact, FileKind } from "./types";
-import { readZip, unzipEntry } from "./zip";
+import { readZip, unzipEntry, salvageBinaryXml } from "./zip";
 import { androidManifest, resourceStrings } from "./axml";
 import { KIND_LIMITS, MB, formatMB } from "./limits";
 import { libraryClass, parseDex } from "./dex";
@@ -172,7 +172,13 @@ function apkParse(buffer: Buffer, a: Artifact) {
   if(tampered.length)a.indicators.push({name:"Header ZIP dimanipulasi (teknik anti-analisis)",evidence:`${tampered.length} entri memakai flag enkripsi palsu atau metode kompresi tak dikenal yang diabaikan Android tetapi menggagalkan alat analisis: ${tampered.slice(0,5).map(e=>e.name.slice(0,80)).join(", ")}`});
   let tags:ReturnType<typeof androidManifest>|null=null;
   try {
-    tags=androidManifest(unzipEntry(buffer,manifest,2*1024*1024));
+    let raw:Buffer;
+    try{raw=unzipEntry(buffer,manifest,2*1024*1024);androidManifest(raw);}
+    catch(error){
+      const salvaged=salvageBinaryXml(buffer,manifest,2*1024*1024);if(!salvaged)throw error;raw=salvaged;
+      a.indicators.push({name:"Manifest disamarkan (teknik anti-analisis)",evidence:"Ukuran ZIP dan header AndroidManifest.xml sengaja dirusak agar alat analisis gagal membaca, sementara Android tetap memasangnya (pola BadPack)."});
+    }
+    tags=androidManifest(raw);
     a.metadata.manifest=tags.find(t=>t.tag==="manifest")?.attributes;
     a.metadata.sdk=tags.find(t=>t.tag==="uses-sdk")?.attributes;
     a.metadata.application=tags.find(t=>t.tag==="application")?.attributes;
@@ -199,7 +205,10 @@ function apkParse(buffer: Buffer, a: Artifact) {
     stats.push({name:name.slice(0,120),size:data.length,version:d.version,strings:d.strings.length,methods:d.methods.length,classes:d.classes.length,...d.code?{code:d.code.complete?"lengkap":`sebagian (${d.code.reason||"struktur rusak"})`}:{code:"dilewati (batas waktu)"}});
   };
   const dex=entries.filter(e=>/^classes\d*\.dex$/.test(e.name)).sort((x,y)=>(parseInt(x.name.slice(7))||1)-(parseInt(y.name.slice(7))||1));
+  const emptyDex:string[]=[];
   for(const e of dex) {
+    // A main DEX too small to hold even a header means the real code is loaded from elsewhere (packer/dropper).
+    if(e.size<0x70){emptyDex.push(`${e.name} (${e.size} byte)`);continue;}
     if(Date.now()>budget.deadline || e.size>budget.bytes){skipped.push(e.name);continue;}
     let data:Buffer|undefined;
     try {data=unzipEntry(buffer,e,DEX_MAX);budget.bytes-=data.length;scan(e.name,data);}
@@ -208,6 +217,11 @@ function apkParse(buffer: Buffer, a: Artifact) {
       console.error(`Kheronyx DEX ${e.name} failed:`,error instanceof Error?error.message:error); failed++;
       a.incomplete=true;a.limitations.push(`Kode ${e.name} tidak berhasil dibedah dalam batas sumber daya.`);if(data)a.strings.push(...printableStrings(data,120));
     }
+  }
+  if(emptyDex.length){
+    a.metadata.emptyDex=emptyDex;
+    a.indicators.push({name:"File kode utama kosong (kode asli disembunyikan)",evidence:`${emptyDex.join(", ")}: kode aplikasi tidak ada di tempat standar dan dimuat dari lokasi lain saat dijalankan (pola packer/dropper).`});
+    a.limitations.push("File kode utama APK kosong; perilaku dari kode yang disembunyikan hanya terlihat sebagian.");
   }
   // Library-only attribution is only trusted when every classes*.dex was read.
   if(skipped.length || failed)sig.codeGaps=true;

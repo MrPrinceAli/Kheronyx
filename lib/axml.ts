@@ -34,7 +34,12 @@ function stringPool(buffer: Buffer, p: number, header: number, size: number, max
   if (count > max || p + header + count * 4 > limit) throw new Error("String pool manifest terlalu besar.");
   const length8 = (q: number) => {if (q >= limit || buffer[q] & 128 && q + 1 >= limit) throw new Error("String manifest terpotong."); const n = buffer[q]; return n & 128 ? {length: ((n & 127) << 8) | buffer[q + 1], next: q + 2} : {length: n, next: q + 1};};
   const cache = new Map<number, string>(); let budget = size * 2 + 65536;
+  // Android tolerates individual broken entries (BadPack manifests point some offsets out of the pool), so a bad
+  // entry decodes as "" instead of discarding the whole manifest; only the work budget aborts the pool.
   return Array.from({length: count}, (_, i) => {
+    try { return decode(i); } catch (error) { if (error instanceof Error && error.message === "String pool tidak wajar.") throw error; return ""; }
+  });
+  function decode(i: number) {
     let q = start + buffer.readUInt32LE(p + header + i * 4); const hit = cache.get(q); if (hit !== undefined) return hit;
     const at = q; if (q + 2 > limit) throw new Error("Offset string manifest tidak valid.");
     let value: string;
@@ -47,7 +52,7 @@ function stringPool(buffer: Buffer, p: number, header: number, size: number, max
     }
     if (budget < 0) throw new Error("String pool tidak wajar.");
     cache.set(at, value); return value;
-  });
+  }
 }
 // Global string pool of resources.arsc (UI labels, messages, google-services values such as Firebase URLs).
 export function resourceStrings(buffer: Buffer, max = 400000): string[] {
