@@ -91,6 +91,32 @@
   max-width: 100%;
 }
 
+.page :global(.footer-credits) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.page :global(.footer-intel) {
+  font: 8px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1px;
+  color: #9aa1a8;
+  white-space: nowrap;
+}
+
+.page :global(.footer-intel a) {
+  color: #5f6870;
+  letter-spacing: .3px;
+  border-bottom: 1px dotted #b7bdc3;
+  transition: color .2s, border-color .2s;
+}
+
+.page :global(.footer-intel a:hover) {
+  color: #16191d;
+  border-color: #16191d;
+}
+
 .page :global(.format-tag) {
   gap: 5px;
 }
@@ -148,6 +174,12 @@
 
   .page :global(.footer-copyright) {
     width: auto;
+  }
+
+  .page :global(.footer-credits) {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
   }
 }
 

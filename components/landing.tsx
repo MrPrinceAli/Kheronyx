@@ -18,6 +18,8 @@ const fileFormats = [
   {extension:"jpg",Icon:ImageIcon},
 ];
 
+// Text attribution only: third-party logos need their owners' permission.
+const intelSources=[["VirusTotal","https://www.virustotal.com"],["abuse.ch","https://abuse.ch"],["RDAP","https://about.rdap.org"]] as const;
 export function Landing() {
   const [open,setOpen]=useState(false),[password,setPassword]=useState(""),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const input=useRef<HTMLInputElement>(null);const emblem=useRef<HTMLDivElement>(null);const enterDashboard=useAccessTransition();
@@ -48,6 +50,6 @@ export function Landing() {
         </div></div>
       </div>
     </main>
-    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><span className="footer-copyright">© 2026 Kheronyx</span></footer>
+    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><div className="footer-credits"><span className="footer-intel">THREAT INTEL{intelSources.map(([name,href],i)=><span key={name}>{i?" · ":" "}<a href={href} target="_blank" rel="noopener noreferrer">{name}</a></span>)}</span><span className="footer-copyright">© 2026 Kheronyx</span></div></footer>
   </div>;
 }
