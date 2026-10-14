@@ -24,9 +24,11 @@ function CopyValue({value}: {value: string}) {
   return <button type="button" className={styles.copy} aria-label={`Salin ${value}`} title="Salin" onClick={() => navigator.clipboard?.writeText(value).then(() => {setDone(true); setTimeout(() => setDone(false), 1400);}).catch(() => {})}>{done ? <Check size={12}/> : <Copy size={12}/>}</button>;
 }
 function Row({tag, label, value, note, danger}: {tag: string; label: string; value: string; note?: string; danger?: boolean}) {
+  // Notes are red only when they are bad news (known malicious host, newly registered domain).
+  const alarming = note ? /tercatat|domain baru/.test(note) : false;
   return <div className={styles.row}>
     <span className={`${styles.tag} ${danger ? styles.danger : ""}`}>{tag}</span>
-    <div className={styles.body}><small>{label}</small><code>{value}</code>{note && <em>{note}</em>}</div>
+    <div className={styles.body}><small>{label}</small><code>{value}</code>{note && <em className={alarming ? "" : styles.calm}>{note}</em>}</div>
     <CopyValue value={value}/>
   </div>;
 }
@@ -35,7 +37,7 @@ function Row({tag, label, value, note, danger}: {tag: string; label: string; val
 // Telegram bot/chat ids, the signer identity the author typed into the certificate, its fingerprint, the package name and
 // malware family. Addresses are plain text, never links.
 export function EndpointPanel({report}: {report: Report}) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(false), [showOthers, setShowOthers] = useState(false);
   const m = report.artifact.metadata as Record<string, unknown>, intel = report.artifact.threatIntel;
   const list = Array.isArray(m.endpoints) ? m.endpoints.filter(valid).slice(0, 25) : [];
   const campaign = (m.campaign ?? {}) as Record<string, unknown>, bots = strings(campaign.telegramBots), chats = strings(campaign.chatIds);
@@ -52,10 +54,12 @@ export function EndpointPanel({report}: {report: Report}) {
     const out: string[] = [], domain = registrableDomain(e.host), d = domain ? intel.domains.find(x => x.domain === domain) : undefined;
     if (intel.urlhaus.some(u => (u.kind === "host" ? u.target : hostOf(u.target)) === e.host)) out.push("tercatat URLhaus");
     const fox = intel.threatfox.find(t => t.term === e.host); if (fox) out.push(`tercatat ThreatFox${fox.family ? ` (${fox.family})` : ""}`);
-    if (d?.ageDays !== undefined) out.push(`domain berumur ${d.ageDays} hari${d.registrar ? `, registrar ${d.registrar}` : ""}`);
+    if (d?.ageDays !== undefined) out.push(d.ageDays < 180 ? `domain baru: berumur ${d.ageDays} hari${d.registrar ? `, registrar ${d.registrar}` : ""}` : `domain lama (${Math.round(d.ageDays / 365)} tahun)`);
     return out;
   };
   const app = report.kind === "apk" ? "aplikasi" : "program", hidden = list.some(concealed);
+  // Plain URLs are context, not servers: they get their own neutral list below the attacker servers.
+  const servers = list.filter(e => e.kind !== "url"), others = list.filter(e => e.kind === "url");
   const id = cert?.subject ? subject(cert.subject) : {}, debug = /Android Debug/i.test(cert?.subject || "");
   const person = [id.CN, id.O && id.O !== id.CN ? id.O : "", id.OU && !/^android$/i.test(id.OU) ? id.OU : ""].filter(Boolean).join(" · ");
   const place = [id.L, id.ST, id.C].filter((v, i, a) => v && a.indexOf(v) === i).join(", ");
@@ -76,11 +80,15 @@ export function EndpointPanel({report}: {report: Report}) {
       {pkg && <Row tag="NAMA PAKET" label="Identitas aplikasi di Android" value={pkg}/>}
       {family && <Row tag="KELUARGA MALWARE" danger label="Menurut abuse.ch" value={family}/>}
     </div>}
-    {!!list.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{list.length}</span></h4>{(showAll ? list : list.slice(0, VISIBLE)).map(e => {
-      const n = notes(e), tag = suspect ? TAG[e.kind] ?? "SERVER PELAKU" : "SERVER";
-      return <Row key={`${e.kind}:${e.value}`} tag={tag} danger={suspect && e.kind !== "url"} label={`${KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
+    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{(showAll ? servers : servers.slice(0, VISIBLE)).map(e => {
+      const n = notes(e);
+      return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : "SERVER"} danger={suspect} label={`${KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
     })}
-      {list.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({list.length})<ChevronDown size={13}/></>}</button>}
+      {servers.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({servers.length})<ChevronDown size={13}/></>}</button>}
+    </div>}
+    {!!others.length && <div className={styles.group}>
+      <button type="button" className={styles.more} aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>URL lain di dalam file ({others.length}){showOthers ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}</button>
+      {showOthers && <><p className={styles.hint}>Alamat yang tertulis di dalam file tetapi tidak menunjukkan tanda server pelaku, misalnya situs dokumentasi atau layanan umum.</p>{others.map(e => <Row key={e.value} tag="URL TERKAIT" label={`URL · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={notes(e).join(" · ") || undefined}/>)}</>}
     </div>}
     <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya</span><span>Alamat yang diunduh atau didekripsi saat {app} berjalan tidak terlihat</span></div>
   </section>;

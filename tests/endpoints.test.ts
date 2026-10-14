@@ -180,3 +180,9 @@ test("EXE: ASCII/UTF-16 strings yield ip:port, whole-string IPs (with socket imp
   const quiet = await extractFile(buildPe([["KERNEL32.dll", ["Sleep"]]], "\x0091.200.1.5\x00"), "tool.exe");
   assert.equal(quiet.metadata.endpoints, undefined);
 });
+test("library identifiers (WebRTC header-extension URIs, CRLs, bug links) and native doc URLs are not endpoints", () => {
+  const strings = ["http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time", "http://crl.globalsign.net/root-r2.crl", "http://www2.public-trust.com/crl/ct/ctroot.crl", "https://crbug.com/1053756", "http://ocsp.digicert.com", "https://docs.some-sdk.dev/guide"];
+  assert.deepEqual(collect(strings, "native:libjingle_peerconnection_so.so"), []);
+  assert.deepEqual(collect(strings.slice(0, 5), "dex"), []);
+  assert.deepEqual(values(collect(["http://45.77.12.3:8080/gate.php"], "native:libc2.so")), ["http://45.77.12.3:8080/gate.php"]);
+});
