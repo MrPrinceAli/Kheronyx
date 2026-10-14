@@ -24,19 +24,25 @@ const IMPACTS: Impact[] = [
   {icon: Ban, title: "Sengaja menghindari pemeriksaan", text: "Isinya disamarkan atau dikunci agar sulit diperiksa. Ini umum pada aplikasi jahat, meski kadang juga dipakai aplikasi resmi.", ids: ["packer", "packed", "obfuscated_strings", "anti_analysis", "native_anti_analysis", "net_anti_analysis", "net_obfuscator", "net_defense_evasion", "encrypted_payload", "no_imports", "pdf_locked", "encrypted_config", "dead_drop"]},
 ];
 const RANK: Record<string, number> = {low: 0, medium: 1, high: 2, critical: 3};
+// VirusTotal sandbox tags that confirm a capability at runtime (lib/virustotal.ts keeps them uppercase).
+const OBSERVED: Record<string, string> = {SENDS_SMS: "sms_send", PERSISTENCE: "persistence", DETECT_DEBUG_ENVIRONMENT: "anti_analysis", LONG_SLEEPS: "anti_analysis", SELF_DELETE: "anti_analysis"};
 
 export function ImpactPanel({report}: {report: Report}) {
   const behaviors = (report.artifact.metadata.behaviors as {id: string; severity: string}[] | undefined) ?? [];
   // Only capabilities the app itself plausibly uses: low/library-only findings would scare without reason.
   const strength = new Map(behaviors.filter(b => RANK[b.severity] >= 1).map(b => [b.id, RANK[b.severity]]));
-  const impacts = IMPACTS.map(impact => ({...impact, level: Math.max(-1, ...impact.ids.map(id => strength.get(id) ?? -1))})).filter(i => i.level >= 0).sort((a, b) => b.level - a.level);
+  // Behaviour seen while VirusTotal's sandbox ran the file shows the capability even when static evidence was weak.
+  const tags = report.artifact.sandbox?.status === "completed" && Array.isArray(report.artifact.sandbox.tags) ? report.artifact.sandbox.tags : [];
+  const observed = new Set(tags.map(t => OBSERVED[t]).filter(Boolean));
+  for (const id of observed) strength.set(id, Math.max(strength.get(id) ?? 1, 1));
+  const impacts = IMPACTS.map(impact => ({...impact, level: Math.max(-1, ...impact.ids.map(id => strength.get(id) ?? -1)), seen: impact.ids.some(id => observed.has(id))})).filter(i => i.level >= 0).sort((a, b) => b.level - a.level || Number(b.seen) - Number(a.seen));
   const urgent = report.assessment.risk === "high" || report.assessment.risk === "critical";
   if (!impacts.length && !urgent) return null;
   const isApk = report.kind === "apk";
   return <section className={styles.panel} aria-label="Dampak bagi perangkat Anda">
     <div className={styles.heading}><Smartphone size={17} strokeWidth={1.5}/><h3>Apa yang bisa dilakukan file ini ke {isApk ? "HP" : "perangkat"} Anda?</h3></div>
     <p className={styles.lead}>Penjelasan sederhana dari kemampuan yang ditemukan di dalam file. Ini kemampuan, belum tentu semuanya sudah terjadi.</p>
-    {!!impacts.length && <div className={styles.grid}>{impacts.map(({icon: Icon, title, text, level}) => <div key={title} className={`${styles.item} ${level >= 2 ? styles.severe : ""}`}><span className={styles.icon}><Icon size={16} strokeWidth={1.6}/></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div>}
+    {!!impacts.length && <div className={styles.grid}>{impacts.map(({icon: Icon, title, text, level, seen}) => <div key={title} className={`${styles.item} ${level >= 2 ? styles.severe : ""}`}><span className={styles.icon}><Icon size={16} strokeWidth={1.6}/></span><div><strong>{title}{seen && <span className={styles.observed}>terpantau di sandbox</span>}</strong><p>{text}</p></div></div>)}</div>}
     {urgent && <div className={styles.help}>
       <strong><ShieldAlert size={15}/>Sudah terlanjur {isApk ? "memasang" : "membuka"}?</strong>
       <ol>

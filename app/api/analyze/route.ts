@@ -6,7 +6,7 @@ import { bucketName, db, rateLimit, saveReport } from "@/lib/db";
 import { extractFile, fileKind } from "@/lib/extract";
 import { blobConfigured, quarantinePath, readBlob, removeBlob } from "@/lib/blob";
 import { KIND_LIMITS, sizeLimits } from "@/lib/limits";
-import { inspectVirusTotal } from "@/lib/virustotal";
+import { fetchBehaviour, inspectVirusTotal, mergeSandboxHosts, virusTotalKnown } from "@/lib/virustotal";
 import type { Report } from "@/lib/types";
 export const runtime="nodejs";
 export const maxDuration=300;
@@ -38,6 +38,7 @@ export async function POST(request:Request) {
     }
     const artifact=await extractFile(buffer,filename);
     artifact.virusTotal=await inspectVirusTotal(artifact,buffer,uploadVirusTotal);
+    if(virusTotalKnown(artifact.virusTotal)){artifact.sandbox=await fetchBehaviour(artifact.sha256);mergeSandboxHosts(artifact);}
     const {assessment,model}=await assess(artifact);
     const report:Report={id:randomUUID(),createdAt:new Date().toISOString(),filename:artifact.filename,kind:artifact.kind,size:artifact.size,sha256:artifact.sha256,model,durationMs:Date.now()-start,assessment,artifact};
     let persisted=false,warning:string|undefined;

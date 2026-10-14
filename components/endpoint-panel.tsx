@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, ChevronDown, ChevronUp, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
-import type { Report } from "@/lib/types";
+import type { Report, SandboxContact } from "@/lib/types";
 import type { Endpoint } from "@/lib/endpoints";
 import { hostOf, registrableDomain } from "@/lib/hosts";
 import panel from "./virus-total.module.css";
@@ -27,8 +27,8 @@ function CopyValue({value}: {value: string}) {
   return <button type="button" className={styles.copy} aria-label={`Salin ${value}`} title="Salin" onClick={() => navigator.clipboard?.writeText(value).then(() => {setDone(true); setTimeout(() => setDone(false), 1400);}).catch(() => {})}>{done ? <Check size={12}/> : <Copy size={12}/>}</button>;
 }
 function Row({tag, label, value, note, danger}: {tag: string; label: string; value: string; note?: string; danger?: boolean}) {
-  // Notes are red only when they are bad news (known malicious host, newly registered domain).
-  const alarming = note ? /tercatat|domain baru/.test(note) : false;
+  // Notes are red only when they are bad news (known malicious host, newly registered domain, connection seen in a sandbox of a suspect file).
+  const alarming = note ? /tercatat|domain baru|koneksi terpantau/.test(note) : false;
   return <div className={styles.row}>
     <span className={`${styles.tag} ${danger ? styles.danger : ""}`}>{tag}</span>
     <div className={styles.body}><small>{label}</small><code>{value}</code>{note && <em className={alarming ? "" : styles.calm}>{note}</em>}</div>
@@ -43,6 +43,8 @@ export function EndpointPanel({report}: {report: Report}) {
   const [showAll, setShowAll] = useState(false), [showOthers, setShowOthers] = useState(false);
   const m = report.artifact.metadata as Record<string, unknown>, intel = report.artifact.threatIntel;
   const list = Array.isArray(m.endpoints) ? m.endpoints.filter(valid).slice(0, 25) : [];
+  // Hosts/IPs VirusTotal's sandboxes saw the file contact at runtime (already noise-filtered in lib/virustotal.ts).
+  const sandbox = report.artifact.sandbox, contacted = sandbox?.status === "completed" && Array.isArray(sandbox.contacted) ? sandbox.contacted.filter(c => c && (typeof c.host === "string" || typeof c.ip === "string")).slice(0, 20) : [];
   const configs = Array.isArray(m.decryptedConfig) ? m.decryptedConfig.filter(config).slice(0, 6) : [];
   const campaign = (m.campaign ?? {}) as Record<string, unknown>, bots = strings(campaign.telegramBots), chats = strings(campaign.chatIds);
   const cert = (m.signing as {certificates?: {subject?: string; sha256?: string; validFrom?: string}[]} | undefined)?.certificates?.[0];
@@ -51,7 +53,7 @@ export function EndpointPanel({report}: {report: Report}) {
   const family = intel?.malwareBazaar?.family || intel?.threatfox.find(t => t.family)?.family || intel?.malwareBazaar?.tags.find(t => !/^(?:apk|exe|pdf|signed|unsigned|dropped|32|64|elf)$/i.test(t));
   const hits = Boolean(intel?.malwareBazaar) || Boolean(intel?.urlhaus.length) || Boolean(intel?.threatfox.length);
   const suspect = report.assessment.risk === "high" || report.assessment.risk === "critical" || hits;
-  if (!list.length && !configs.length && !(suspect && (cert || signer || bots.length || chats.length))) return null;
+  if (!list.length && !configs.length && !contacted.length && !(suspect && (cert || signer || bots.length || chats.length))) return null;
 
   const notes = (e: Endpoint) => {
     if (!intel) return [];
@@ -64,7 +66,20 @@ export function EndpointPanel({report}: {report: Report}) {
   };
   const app = report.kind === "apk" ? "aplikasi" : "program", hidden = list.some(concealed);
   // Plain URLs are context, not servers: they get their own neutral list below the attacker servers.
-  const servers = list.filter(e => e.kind !== "url"), others = list.filter(e => e.kind === "url");
+  const seen = (e: Endpoint) => contacted.some(c => c.host === e.host || c.ip === e.host);
+  const statics = list.filter(e => e.kind !== "url" || seen(e)), others = list.filter(e => e.kind === "url" && !seen(e));
+  const extra = contacted.filter(c => !list.some(e => e.host === c.host || e.host === c.ip));
+  const detail = (c: SandboxContact) => [c.host && c.ip ? `IP ${c.ip}` : "", c.port ? `port ${c.port}${c.protocol ? `/${c.protocol}` : ""}` : "", c.url || ""].filter(Boolean).join(" · ");
+  const row = (e: Endpoint) => {
+    const n = notes(e); if (seen(e)) n.unshift(suspect ? "koneksi terpantau saat dijalankan (sandbox VirusTotal)" : "terhubung saat diuji (sandbox VirusTotal)");
+    return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : e.kind === "deaddrop" ? "SUMBER KONFIG" : "SERVER"} danger={suspect} label={`${(suspect && SUSPECT_KIND[e.kind]) || KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
+  };
+  const runtime = (c: SandboxContact) => {
+    const value = c.host || c.ip!, d = detail(c), n = notes({value, host: value, kind: c.host ? "panel" : "ip", source: "sandbox"});
+    return <Row key={`sandbox:${value}`} tag={suspect ? "KONEKSI TERPANTAU" : "KONEKSI SAAT DIUJI"} danger={suspect} label={`Terpantau terhubung saat dijalankan di sandbox VirusTotal${d ? ` · ${d}` : ""}`} value={value} note={n.join(" · ") || undefined}/>;
+  };
+  // Runtime-confirmed addresses first: static endpoints the sandbox saw contacted, then sandbox-only contacts, then the rest.
+  const servers = [...statics.filter(seen).map(row), ...extra.map(runtime), ...statics.filter(e => !seen(e)).map(row)];
   const id = cert?.subject ? subject(cert.subject) : {}, debug = /Android Debug/i.test(cert?.subject || "");
   const person = [id.CN, id.O && id.O !== id.CN ? id.O : "", id.OU && !/^android$/i.test(id.OU) ? id.OU : ""].filter(Boolean).join(" · ");
   const place = [id.L, id.ST, id.C].filter((v, i, a) => v && a.indexOf(v) === i).join(", ");
@@ -85,10 +100,7 @@ export function EndpointPanel({report}: {report: Report}) {
       {pkg && <Row tag="NAMA PAKET" label="Identitas aplikasi di Android" value={pkg}/>}
       {family && <Row tag="KELUARGA MALWARE" danger label="Menurut abuse.ch" value={family}/>}
     </div>}
-    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{(showAll ? servers : servers.slice(0, VISIBLE)).map(e => {
-      const n = notes(e);
-      return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : e.kind === "deaddrop" ? "SUMBER KONFIG" : "SERVER"} danger={suspect} label={`${(suspect && SUSPECT_KIND[e.kind]) || KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
-    })}
+    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{showAll ? servers : servers.slice(0, VISIBLE)}
       {servers.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({servers.length})<ChevronDown size={13}/></>}</button>}
     </div>}
     {!!configs.length && <div className={styles.group}><h4>Konfigurasi terenkripsi yang berhasil dibuka<span className={styles.count}>{configs.length}</span></h4>
@@ -98,6 +110,6 @@ export function EndpointPanel({report}: {report: Report}) {
       <button type="button" className={styles.more} aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>URL lain di dalam file ({others.length}){showOthers ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}</button>
       {showOthers && <><p className={styles.hint}>Alamat yang tertulis di dalam file tetapi tidak menunjukkan tanda server pelaku, misalnya situs dokumentasi atau layanan umum.</p>{others.map(e => <Row key={e.value} tag="URL TERKAIT" label={`URL · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={notes(e).join(" · ") || undefined}/>)}</>}
     </div>}
-    <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya</span><span>{configs.length ? `Konfigurasi terenkripsi dibuka statis dengan kunci bawaan ${app}; alamat yang diunduh saat berjalan tidak terlihat` : `Alamat yang diunduh atau didekripsi saat ${app} berjalan tidak terlihat`}</span></div>
+    <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya{contacted.length ? "; alamat bertanda koneksi terpantau dicatat oleh sandbox VirusTotal yang menjalankan file ini (bukan Kheronyx)" : ""}</span><span>{configs.length ? `Konfigurasi terenkripsi dibuka statis dengan kunci bawaan ${app}; alamat yang diunduh saat berjalan tidak terlihat` : `Alamat yang diunduh atau didekripsi saat ${app} berjalan tidak terlihat`}</span></div>
   </section>;
 }

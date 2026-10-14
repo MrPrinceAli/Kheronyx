@@ -1,4 +1,4 @@
-import type { Artifact, Assessment, Report, VirusTotalResult } from "./types";
+import type { Artifact, Assessment, Report, SandboxResult, VirusTotalResult } from "./types";
 
 const findingTitle = "Hasil engine antivirus VirusTotal";
 const baselineLimit = "VirusTotal: hasil antivirus dapat mengandung false positive; nol deteksi bukan jaminan bebas malware.";
@@ -43,4 +43,10 @@ export function updateVirusTotalReport(report: Report, result: VirusTotalResult)
   const assessment = applyVirusTotalEvidence(report.assessment, artifact);
   assessment.limitations = [...new Set([...assessment.limitations, "VirusTotal: hasil diperbarui; penjelasan AI tetap berasal dari analisis awal."])];
   return { ...report, artifact, assessment };
+}
+
+// A refreshed sandbox digest replaces the stored one only when it is an actual answer (data or "never sandboxed");
+// quota/errors never erase earlier behaviour evidence.
+export function pickSandbox(old: SandboxResult | undefined, fresh: SandboxResult | undefined) {
+  return fresh && (!old || fresh.status === "completed" || fresh.status === "empty") ? fresh : old;
 }

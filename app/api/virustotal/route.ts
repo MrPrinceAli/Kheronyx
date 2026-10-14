@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sameOrigin, sessionId } from "@/lib/auth";
 import { rateLimit, readReport, storageConfigured, updateReport } from "@/lib/db";
-import { lookupVirusTotal } from "@/lib/virustotal";
-import { updateVirusTotalReport } from "@/lib/virus-total-evidence";
+import { fetchBehaviour, lookupVirusTotal, virusTotalKnown } from "@/lib/virustotal";
+import { pickSandbox, updateVirusTotalReport } from "@/lib/virus-total-evidence";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -23,10 +23,13 @@ export async function POST(request: Request) {
     if (stored?.artifact.virusTotal && ["completed", "pending"].includes(stored.artifact.virusTotal.status) && virusTotal.status !== "completed") {
       return NextResponse.json({ virusTotal: stored.artifact.virusTotal, report: stored, warning: virusTotal.message }, { headers: { "Cache-Control": "no-store" } });
     }
-    const report = stored ? updateVirusTotalReport(stored, { ...virusTotal, source: stored.artifact.virusTotal?.source || virusTotal.source }) : undefined;
+    // Sandbox behaviour (≤10 s, one more request) only for files VirusTotal knows; the AI explanation is not re-run.
+    const fresh = virusTotalKnown(virusTotal) ? await fetchBehaviour(sha256) : undefined, sandbox = pickSandbox(stored?.artifact.sandbox, fresh);
+    const updated = stored ? updateVirusTotalReport(stored, { ...virusTotal, source: stored.artifact.virusTotal?.source || virusTotal.source }) : undefined;
+    const report = updated && sandbox ? { ...updated, artifact: { ...updated.artifact, sandbox } } : updated;
     let warning: string | undefined;
     if (report) try { await updateReport(report); } catch (error) { warning = error instanceof Error ? error.message : "Hasil belum tersimpan."; }
-    return NextResponse.json({ virusTotal, report, warning }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ virusTotal, sandbox: fresh, report, warning }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "Hasil VirusTotal belum dapat diperbarui. Periksa referensi laporan dan coba lagi." }, { status: 400 });
   }

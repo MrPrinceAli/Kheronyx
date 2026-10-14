@@ -23,6 +23,16 @@
 .detections { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .detections > span { padding: 6px 8px; background: #fff; border: 1px solid #e9edf1; border-radius: 6px; color: #8c98a5; font-size: 9px; overflow-wrap: anywhere; max-width: 100%; }
 .detections b { font-weight: 500; color: #677583; margin-right: 6px; }
+.sandbox { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e8edf1; }
+.sandbox h4 { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: #8a96a2; }
+.sandbox > p { margin-top: 8px; }
+.detections > span.alert { color: var(--red); background: var(--red-bg); border-color: #f2d6d6; }
+.detections > span.alert b { color: var(--red); }
+.mitre, .highlights { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.mitre li { display: flex; align-items: baseline; gap: 8px; font-size: 9.5px; color: #5f6b77; }
+.mitre code { flex-shrink: 0; min-width: 58px; font: 600 8.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: #7c8997; }
+.mitre small { margin-left: auto; flex-shrink: 0; font-size: 8px; color: #9aa5b0; }
+.highlights li { font-size: 9px; line-height: 1.6; color: #7c8997; padding-left: 10px; border-left: 2px solid #e3e8ed; overflow-wrap: anywhere; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; color: #9ba6b1; font-size: 8px; line-height: 1.7; }
 @media (max-width: 650px) {
   .panel { margin: 18px 18px 0; padding: 15px; }

@@ -22,6 +22,16 @@ export type ThreatIntelResult = {
   domains: {domain: string; registered?: string; expires?: string; ageDays?: number; registrar?: string}[];
   skipped?: string[]; errors?: string[];
 };
+// Runtime behaviour observed by VirusTotal's own sandboxes (behaviour_summary), normalized and noise-filtered. Kheronyx
+// never executes files; this is third-party evidence. contacted = non-benign network contacts (connectivity checks,
+// vendor telemetry, private/reserved IPs and IPs that only served filtered hostnames are dropped).
+export type SandboxContact = {host?: string; ip?: string; port?: number; protocol?: string; url?: string; kind: "dns" | "ip" | "http"};
+export type SandboxResult = {
+  source: "virustotal"; status: "completed" | "empty" | "not_configured" | "rate_limited" | "error"; fetchedAt: string; message?: string;
+  sandboxes: string[]; contacted: SandboxContact[]; tags: string[]; verdicts: string[]; labels?: string[];
+  mitre: {id: string; description: string; severity?: "info" | "low" | "medium" | "high"}[]; highlights?: string[];
+  counts?: {dns: number; ip: number; http: number; processes: number; filesDropped: number; filtered: number};
+};
 export const assessmentSchema = z.object({
   risk: z.enum(riskLevels),
   confidence: z.enum(["low", "medium", "high"]),
@@ -40,7 +50,7 @@ export type Artifact = {
   filename: string; kind: FileKind; size: number; sha256: string;
   metadata: Record<string, unknown>; strings: string[]; urls: string[];
   indicators: {name: string; evidence: string}[];
-  limitations: string[]; incomplete: boolean; virusTotal?: VirusTotalResult; threatIntel?: ThreatIntelResult;
+  limitations: string[]; incomplete: boolean; virusTotal?: VirusTotalResult; threatIntel?: ThreatIntelResult; sandbox?: SandboxResult;
 };
 export type Report = {
   id: string; createdAt: string; filename: string; kind: FileKind; size: number;
