@@ -50,6 +50,7 @@ Kheronyx lets anyone **look inside a file before opening it**. It takes the file
 | 🧬 **Knows who called what** | Decoded call sites tell app code from libraries, e.g. *"`SmsReceiver.onReceive` reads SMS **and** sends it to the panel"*. |
 | 🧩 **Sees through tricks** | BadPack ZIP headers, empty `classes.dex`, zeroed manifest headers, XOR/base64/char-array string hiding, repackaged APKs (v2/v3 signature verification). |
 | 🛰️ **Threat intelligence** | VirusTotal reputation, abuse.ch **MalwareBazaar / URLhaus / ThreatFox** lookups, and **RDAP** domain age for every server found inside the file. |
+| 🧑‍🤝‍🧑 **Made for non-experts** | Every report translates technical findings into plain consequences (*"can read your OTP codes and drain your account"*) plus emergency steps if the app was already installed. |
 | 🤖 **AI verdict, with guardrails** | A schema-validated LLM report that must cite extracted evidence. Missing evidence can never produce a "safe" verdict. |
 | 🔗 **Campaign tracking** | Signer certificate SHA-256 values and redacted bot IDs link samples from the same scam actor. |
 | ☁️ **Close the tab, keep the job** | Analyses run as durable background jobs with automatic retries (Supabase `pg_cron`) and can be cancelled. |
@@ -61,6 +62,11 @@ A real **SMSspy** sample from MalwareBazaar, renamed the way victims receive it:
 
 <div align="center">
 <img src="docs/screenshots/report.png" alt="Kheronyx report for a real SMS stealer" width="720"/>
+</div>
+
+<div align="center">
+<img src="docs/screenshots/impact.png" alt="Plain-language impact card for non-technical users" width="720"/>
+<br/><sub>What the file can do to your phone, explained for everyone, with emergency steps</sub>
 </div>
 
 <table>
