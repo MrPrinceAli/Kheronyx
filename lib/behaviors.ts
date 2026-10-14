@@ -239,9 +239,15 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   const smsPerm = perm("RECEIVE_SMS", "READ_SMS", "RECEIVE_MMS", "RECEIVE_WAP_PUSH"), smsApi = api("smsRead"), smsRecv = action(/SMS_RECEIVED|SMS_DELIVER|WAP_PUSH_RECEIVED/), smsStr = str("smsUri");
   // BroadcastReceiver subclasses (direct or indirect) whose own code parses SMS; undeclared ones are registered at runtime.
   const smsCode = sig.receivers("smsRead").map(c => {const d = dotted(c); return declared.has(d) ? d : `${d} (tidak ada di manifest: didaftarkan saat runtime)`;});
-  add("sms_read", "Membaca atau mencegat SMS", smsRecv.length || smsCode.length || smsApi.length && smsPerm.length ? "high" : "medium", [join("izin", smsPerm), join("API", smsApi), calls("smsRead"), join("penerima SMS", smsRecv, 3), join("receiver SMS di kode", smsCode, 2), join("string", smsStr, 3)]);
+  // A full default-SMS-app (SMS_DELIVER + WAP_PUSH_DELIVER receivers and a RESPOND_VIA_MESSAGE service) reads and sends SMS by
+  // design; stealers instead eavesdrop via SMS_RECEIVED. Such apps only count when other strong signals appear.
+  // Stealers now also claim the default-SMS role, so the exemption is void with a raw-IP/DDNS server or a device-admin
+  // receiver, which genuine SMS clients never need.
+  const rawServer = (context.endpoints || []).some(e => e.kind === "ip" || e.kind === "ddns"), adminReceiver = sub("admin").length > 0 || comp(c => c.permission.endsWith("BIND_DEVICE_ADMIN")).length > 0;
+  const smsApp = action(/SMS_DELIVER$/).length > 0 && action(/WAP_PUSH_DELIVER$/).length > 0 && action(/RESPOND_VIA_MESSAGE$/).length > 0 && !rawServer && !adminReceiver;
+  add("sms_read", "Membaca atau mencegat SMS", smsApp ? "low" : smsRecv.length || smsCode.length || smsApi.length && smsPerm.length ? "high" : "medium", [smsApp ? "terdaftar sebagai aplikasi SMS default (wajar membaca SMS)" : "", join("izin", smsPerm), join("API", smsApi), calls("smsRead"), join("penerima SMS", smsRecv, 3), join("receiver SMS di kode", smsCode, 2), join("string", smsStr, 3)]);
   const sendPerm = perm("SEND_SMS"), sendApi = api("smsSend");
-  add("sms_send", "Mengirim SMS tanpa interaksi pengguna", sendApi.length && sendPerm.length ? "high" : "medium", [join("izin", sendPerm), join("API", sendApi), sendApi.length ? calls("smsSend") : ""]);
+  add("sms_send", "Mengirim SMS tanpa interaksi pengguna", smsApp ? "low" : sendApi.length && sendPerm.length ? "high" : "medium", [join("izin", sendPerm), join("API", sendApi), sendApi.length ? calls("smsSend") : ""]);
   const a11yDecl = [...sub("a11y"), ...comp(c => c.permission.endsWith("BIND_ACCESSIBILITY_SERVICE") || c.actions.includes("android.accessibilityservice.AccessibilityService"))], a11yAct = api("a11yAct");
   if (a11yDecl.length || a11yAct.length) add("accessibility", "Penyalahgunaan layanan aksesibilitas", a11yAct.length ? "high" : "medium", [join("layanan aksesibilitas", a11yDecl, 3), join("API", [...a11yAct, ...api("a11yNode")]), a11yAct.length ? calls("a11yAct", "a11yNode") : "", join("string", str("a11ySettings"), 2)]);
   const overlayPerm = perm("SYSTEM_ALERT_WINDOW"), overlayApi = api("overlay"), overlayStr = str("overlaySettings");
@@ -254,11 +260,13 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   const ime = [...sub("ime"), ...comp(c => c.permission.endsWith("BIND_INPUT_METHOD"))];
   if (ime.length) add("keyboard", "Keyboard kustom (dapat merekam ketikan)", comp(c => c.permission.endsWith("BIND_INPUT_METHOD")).length ? "medium" : "low", [join("keyboard (InputMethodService)", ime, 3)]);
   const otp = str("otp");
-  if (otp.length && (has("sms_read") || has("notification_listener") || has("accessibility"))) add("otp_intercept", "Penyadapan kode OTP", "high", [join("string OTP", otp, 3), `sumber: ${["sms_read", "notification_listener", "accessibility"].filter(has).join(", ")}`]);
+  if (otp.length && (has("sms_read") && !smsApp || has("notification_listener") || has("accessibility"))) add("otp_intercept", "Penyadapan kode OTP", "high", [join("string OTP", otp, 3), `sumber: ${["sms_read", "notification_listener", "accessibility"].filter(has).join(", ")}`]);
   const loaders = api("dexLoad"), dexLoaders = loaders.filter(x => /DexClassLoader|InMemoryDex|DexFile/.test(x));
   add("dynamic_code", "Memuat kode secara dinamis", has("hidden_payload") && loaders.length ? "high" : dexLoaders.length ? "medium" : "low", [join("API", [...dexLoaders, ...loaders.filter(x => !dexLoaders.includes(x))]), loaders.length ? calls("dexLoad") : ""]);
   add("shell_exec", "Menjalankan perintah shell / cek root", "low", [join("API", api("exec")), join("string", str("root"), 3)]);
-  const launcher = hasLauncher(m), hideApi = api("hideIcon"), risky = ["sms_read", "sms_send", "accessibility", "notification_listener", "device_admin"].some(has);
+  // setComponentEnabledSetting is also how legit apps swap launcher icons or toggle features, so it only counts as hiding
+  // next to eavesdropping capabilities (device-owner receivers are normal for app stores and MDM).
+  const launcher = hasLauncher(m), hideApi = api("hideIcon"), risky = (smsApp ? [] : ["sms_read", "sms_send"]).concat("accessibility", "notification_listener").some(has);
   if (m.parsed && !launcher || hideApi.length && risky) add("hidden_icon", "Menyembunyikan ikon aplikasi", "medium", [m.parsed && !launcher ? "Tidak ada activity MAIN/LAUNCHER di manifest" : "", risky ? join("API", hideApi) : "", risky && hideApi.length ? calls("hideIcon") : ""]);
   add("install_apps", "Memasang APK lain", api("install").length ? "medium" : "low", [join("izin", perm("REQUEST_INSTALL_PACKAGES", "INSTALL_PACKAGES")), join("API", api("install")), join("string", str("apkMime"), 1)]);
   add("screen_capture", "Merekam atau menyiarkan layar", "medium", [join("API", api("projection")), join("izin", perm("FOREGROUND_SERVICE_MEDIA_PROJECTION"))]);
@@ -274,7 +282,9 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   const nfc = [...sub("nfc"), ...comp(c => c.permission.endsWith("BIND_NFC_SERVICE"))]; if (nfc.length) add("nfc_relay", "Emulasi kartu NFC (potensi relay kartu)", "medium", [join("layanan HCE", nfc, 3)]);
   // Strings recovered from simple obfuscation (base64/hex/reversed/arrays/XOR/StringBuilder).
   const secret = sig.hidden.filter(h => !strict || !h.lib);
-  add("obfuscated_strings", "String disamarkan berisi alamat/rahasia", secret.some(h => STRONG.test(h.value)) ? "high" : "medium", secret.slice(0, 6).map(h => `${redactSecrets(h.value).slice(0, 110)} (disamarkan: ${h.technique})${h.where ? ` di ${member(h.where)}` : ""}`));
+  // Hiding a server address (URL, panel path, IP:port) is deliberate concealment of where data goes, not just a secret.
+  const hiddenServer = (v: string) => STRONG.test(v) || /^(?:https?|tcp|ftp):\/\/[^/\s]+/i.test(v) && !/(?:^|\.)(?:google|googleapis|gstatic|android|facebook|apple|microsoft)\.com/i.test(v) || /^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/.test(v);
+  add("obfuscated_strings", "String disamarkan berisi alamat/rahasia", secret.some(h => hiddenServer(h.value)) ? "high" : "medium", secret.slice(0, 6).map(h => `${redactSecrets(h.value).slice(0, 110)} (disamarkan: ${h.technique})${h.where ? ` di ${member(h.where)}` : ""}`));
   // Exfiltration channels.
   const bots = [...sig.bots], chats = [...sig.chats];
   add("exfil_webhook", "Mengirim data ke webhook Discord/Slack", "high", [join("webhook", str("discord", "slack"), 3)]);
@@ -295,7 +305,7 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   const campaign = [context.certSha256 ? `sertifikat SHA-256 ${context.certSha256}` : "", bots.length ? `bot Telegram ${bots.slice(0, 3).join(", ")}` : ""].filter(Boolean).join("; ");
   // Bytecode link: the class that reads SMS (or a class in its package) also sends data out.
   const link = strict && has("sms_read") ? sig.smsLink() : "";
-  if (has("sms_read") && (exfil.length || perm("INTERNET").length || link)) add("sms_stealer", "Pola pencuri SMS/OTP (SMS + pengiriman ke server)", strong.length && (hidden || minimalUi || link) ? "critical" : "high", [
+  if (has("sms_read") && (exfil.length || perm("INTERNET").length || link) && (!smsApp || strong.length || hidden)) add("sms_stealer", "Pola pencuri SMS/OTP (SMS + pengiriman ke server)", strong.length && (hidden || minimalUi || link) ? "critical" : "high", [
     `SMS: ${has("sms_read")!.evidence.slice(0, 2).join("; ")}`, `kanal: ${exfil.length ? exfil.map(b => b.name).join(", ") : link ? "kode jaringan/SMS" : "izin INTERNET"}`, link ? `rantai kode: ${link}`.slice(0, 200) : "",
     hidden ? "ikon peluncur disembunyikan/tidak ada" : "", minimalUi ? `UI minim (${activities} activity)` : "", has("otp_intercept") ? "teks OTP ditemukan" : "", campaign]);
   const a11y = has("accessibility");
@@ -304,11 +314,19 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   // Raw-socket/DDNS C2 (SpyNote-style RATs): direct IP or dynamic-DNS server; strong with RAT/banking capabilities or when hidden.
   const direct = eps.filter(e => e.kind === "ip" || e.kind === "ddns");
   if (direct.length) {
-    const rat = ["banking_trojan", "sms_stealer", "accessibility", "screen_capture", "camera_mic", "notification_listener", "keyboard", "net_rat", "net_keylogger"].filter(has), concealed = direct.filter(e => /^(?:deobfuscated|native)/.test(e.source));
-    add("c2_socket", "Terhubung ke server pelaku lewat IP/DDNS (koneksi langsung)", rat.length || concealed.length ? "high" : "medium", [join("server", direct.map(ep), 4), concealed.length ? "alamat server disembunyikan (disamarkan/kode native): penyamaran yang disengaja" : "", join("API soket", api("net").filter(x => /Socket/.test(x)), 3), rat.length ? `bersama kemampuan: ${rat.join(" + ")}` : ""]);
+    // Native libraries legitimately embed addresses (resolvers, test hosts), so only deliberate obfuscation counts as concealment;
+    // a bare address next to everyday capabilities (camera, keyboard...) is no C2 evidence on its own.
+    const rat = ["banking_trojan", "sms_stealer", "net_rat", "net_keylogger"].filter(has), concealed = direct.filter(e => e.source.startsWith("deobfuscated"));
+    const eavesdrop = ["accessibility", "notification_listener", "sms_read"].filter(id => has(id) && has(id)!.severity !== "low");
+    add("c2_socket", "Terhubung ke server pelaku lewat IP/DDNS (koneksi langsung)", rat.length || concealed.length ? "high" : eavesdrop.length ? "medium" : "low", [join("server", direct.map(ep), 4), concealed.length ? "alamat server disembunyikan (disamarkan/kode native): penyamaran yang disengaja" : "", join("API soket", api("net").filter(x => /Socket/.test(x)), 3), rat.length ? `bersama kemampuan: ${rat.join(" + ")}` : ""]);
   }
+  // Context gate: everyday capabilities only matter next to a malicious pattern or channel. Without one they stay low, so
+  // legitimate apps (SMS clients, keyboards, app stores, media players...) are not presented as threats.
+  const malicious = out.some(b => ["sms_stealer", "banking_trojan", "dropper", "exfil_telegram", "exfil_webhook", "exfil_tunnel"].includes(b.id) || ["c2_socket", "obfuscated_strings", "hidden_payload", "otp_intercept"].includes(b.id) && RANK[b.severity] >= RANK.high);
+  if (!malicious) for (const b of out) if (GATED.has(b.id) && b.severity === "medium") b.severity = "low";
   return out.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
 }
+const GATED = new Set(["overlay", "keyboard", "contacts", "call_log", "device_identifiers", "location", "screen_capture", "camera_mic", "install_apps", "dynamic_code", "notification_listener", "device_admin", "exfil_panel", "exfil_ip", "exfil_email", "native_anti_analysis", "nfc_relay", "c2_socket", "obfuscated_strings"]);
 const SOURCE: Record<string, string> = {dex: "kode DEX", payload: "payload tersembunyi", resources: "resource", manifest: "manifest", exe: "string program", dotnet: "string .NET"};
 // Where an endpoint was found (Endpoint.source), in Indonesian.
 export const sourceLabel = (s: string) => s.startsWith("deobfuscated:") ? `disamarkan: ${s.slice(13)}` : s.startsWith("native:") ? `library native ${s.slice(7)}` : SOURCE[s] || s;

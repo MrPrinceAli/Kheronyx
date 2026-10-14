@@ -4,6 +4,8 @@
 //   Fetch real samples from MalwareBazaar (free Auth-Key from https://auth.abuse.ch):
 //     ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.ts fetch --tag SMSspy --limit 40
 //     ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.ts fetch --signature AgentTesla --type exe --limit 15
+//   Legitimate F-Droid apps as a false-positive control set:
+//     npx tsx scripts/eval-corpus.ts fetch-fdroid [--packages a,b] [--max-mb 90]
 //   Evaluate a folder (put known-good apps in .corpus/benign to measure false alarms):
 //     npx tsx scripts/eval-corpus.ts run .corpus/SMSspy [--json report.json]
 //
@@ -49,6 +51,26 @@ async function fetchSamples() {
   }
 }
 
+// Legitimate open-source apps from F-Droid as a false-positive control set. The defaults deliberately include
+// apps whose permissions look like malware: SMS/dialer/contacts, a keyboard, app stores that install APKs,
+// VPN/Tor, a password manager with autofill, and Telegram FOSS (Telegram API strings).
+const FDROID_DEFAULT = ["org.fossify.messages", "org.fossify.phone", "org.fossify.contacts", "org.fossify.gallery", "helium314.keyboard", "org.telegram.messenger", "com.aurora.store", "org.fdroid.fdroid", "com.wireguard.android", "org.torproject.android", "com.kunzisoft.keepass.libre", "eu.faircode.email", "de.danoeh.antennapod", "org.schabi.newpipe", "com.termux", "org.wikipedia", "com.nextcloud.client", "org.tasks", "im.vector.app", "org.videolan.vlc", "net.thunderbird.android", "com.github.libretube", "org.localsend.localsend_app", "io.homeassistant.companion.android.minimal"];
+async function fetchFdroid() {
+  const packages = (arg("packages")?.split(",") ?? FDROID_DEFAULT).map(p => p.trim()).filter(Boolean), maxMb = Number(arg("max-mb", "90"));
+  const dir = join(".corpus", "benign-fdroid"); mkdirSync(dir, {recursive: true});
+  for (const name of packages) {
+    try {
+      const info = await (await fetch(`https://f-droid.org/api/v1/packages/${name}`)).json() as {suggestedVersionCode?: number};
+      if (!info.suggestedVersionCode) { console.log(`skip ${name}: not on F-Droid`); continue; }
+      const target = join(dir, `${name}_${info.suggestedVersionCode}.apk`); try { statSync(target); continue; } catch {}
+      const response = await fetch(`https://f-droid.org/repo/${name}_${info.suggestedVersionCode}.apk`);
+      if (!response.ok) { console.log(`skip ${name}: HTTP ${response.status}`); continue; }
+      const size = Number(response.headers.get("content-length") || 0); if (size > maxMb * 1048576) { await response.body?.cancel(); console.log(`skip ${name}: ${Math.round(size / 1048576)} MB`); continue; }
+      writeFileSync(target, Buffer.from(await response.arrayBuffer())); chmodSync(target, 0o444); console.log(`saved ${target}`);
+    } catch (error) { console.log(`skip ${name}: ${error instanceof Error ? error.message : error}`); }
+  }
+}
+
 async function evaluate() {
   const dir = process.argv[3]; if (!dir) throw new Error("Usage: run <folder> [--json out.json]");
   const files = readdirSync(dir).filter(f => SUPPORTED.has(extname(f).toLowerCase()));
@@ -78,4 +100,4 @@ async function evaluate() {
 
 // CommonJS entry (no top-level await): pdf.js only resolves its dynamic import correctly outside tsx's ESM mode.
 const command = process.argv[2];
-(command === "fetch" ? fetchSamples() : command === "run" ? evaluate() : Promise.reject(new Error("Commands: fetch | run"))).catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
+(command === "fetch" ? fetchSamples() : command === "fetch-fdroid" ? fetchFdroid() : command === "run" ? evaluate() : Promise.reject(new Error("Commands: fetch | fetch-fdroid | run"))).catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

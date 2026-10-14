@@ -43,3 +43,18 @@ test("BadPack manifest: lying ZIP sizes and a zeroed AXML type are salvaged", as
   const repaired = salvageBinaryXml(buffer, entry, 1 << 20);
   assert.equal(repaired?.length, 96); assert.equal(repaired?.readUInt16LE(0), 3);
 });
+
+test("calibration: default SMS apps are not stealers unless they also hide behind raw servers or device admin", async () => {
+  const { evaluate, manifestModel, Signals } = await import("../lib/behaviors");
+  const tags = (extra: {tag: string; attributes: Record<string, string>}[]) => [
+    {tag: "manifest", attributes: {package: "org.sms.app"}}, ...["READ_SMS", "RECEIVE_SMS", "SEND_SMS", "INTERNET"].map(p => ({tag: "uses-permission", attributes: {name: `android.permission.${p}`}})),
+    {tag: "activity", attributes: {name: "org.sms.app.Main"}}, {tag: "action", attributes: {name: "android.intent.action.MAIN"}}, {tag: "category", attributes: {name: "android.intent.category.LAUNCHER"}},
+    {tag: "receiver", attributes: {name: "org.sms.app.SmsReceiver", permission: "android.permission.BROADCAST_SMS"}}, {tag: "action", attributes: {name: "android.provider.Telephony.SMS_DELIVER"}},
+    {tag: "receiver", attributes: {name: "org.sms.app.MmsReceiver"}}, {tag: "action", attributes: {name: "android.provider.Telephony.WAP_PUSH_DELIVER"}},
+    {tag: "service", attributes: {name: "org.sms.app.Respond"}}, {tag: "action", attributes: {name: "android.intent.action.RESPOND_VIA_MESSAGE"}}, ...extra];
+  const ids = (list: {id: string; severity: string}[]) => Object.fromEntries(list.map(b => [b.id, b.severity]));
+  const legit = ids(evaluate(new Signals(), manifestModel(tags([]) as never), [], {}));
+  assert.equal(legit.sms_read, "low"); assert.equal(legit.sms_stealer, undefined);
+  const admin = ids(evaluate(new Signals(), manifestModel(tags([{tag: "receiver", attributes: {name: "org.sms.app.Admin", permission: "android.permission.BIND_DEVICE_ADMIN"}}]) as never), [], {}));
+  assert.notEqual(admin.sms_read, "low"); assert.ok(admin.sms_stealer);
+});

@@ -83,11 +83,17 @@ test("IP filter: resolvers, OIDs, versions, private/reserved ranges and placehol
   assert.deepEqual(collect(noise, "native:libx.so"), []);
   for (const ip of ["8.8.8.8", "10.1.1.1", "1.1.1.1", "203.0.113.5", "300.1.1.1"]) assert.equal(publicIpv4(ip), false, ip);
   assert.equal(publicIpv4("103.146.158.229"), true);
-  // Bare public IP: only with context (port, URL, deobfuscation, native code, socket-linked call site).
+  // Bare public IP: only with context (port, URL, deobfuscation, socket-linked call site). Native libraries embed dotted
+  // version numbers (libvlc "6.7.8.5"), so a native bare IP needs a port like any other string.
   assert.deepEqual(collect(["45.77.12.3"]), []);
-  assert.deepEqual(values(collect(["45.77.12.3"], "native:libc2.so")), ["45.77.12.3"]);
+  assert.deepEqual(collect(["45.77.12.3", "6.7.8.5"], "native:libc2.so"), []);
+  assert.deepEqual(values(collect(["45.77.12.3:4444"], "native:libc2.so")), ["45.77.12.3:4444"]);
   assert.deepEqual(values(collect(["45.77.12.3:4444", "tcp://51.15.2.9:7771", "connect 91.200.1.5:1177 now"])).sort(), ["45.77.12.3:4444", "91.200.1.5:1177", "tcp://51.15.2.9:7771"]);
   assert.deepEqual(collect(["http://10.0.0.1/gate.php", "http://8.8.8.8/x"]), []);
+});
+test("localized sample hosts are not endpoints", () => {
+  assert.deepEqual(collect(["https://exemple.duckdns.org:8123", "https://eksempel.duckdns.org:8123", "https://esimerkki.duckdns.org:8123", "http://yourdomain.ddns.net:9000"], "resources"), []);
+  assert.deepEqual(values(collect(["https://victim-panel.duckdns.org:8123"], "resources")), ["https://victim-panel.duckdns.org:8123"]);
 });
 test("deobfuscation keeps base64/hex-hidden public IPs (and IP:port) but not resolvers", () => {
   assert.deepEqual(decodeHidden(b64("103.146.158.229")), {value: "103.146.158.229", technique: "base64"});

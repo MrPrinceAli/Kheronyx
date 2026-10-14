@@ -30,7 +30,11 @@ const QUIET = ["schemas.android.com", "googlesource.com", "googletagmanager.com"
 const MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "office365.com", "aol.com", "icloud.com", "yandex.ru", "yandex.com", "mail.ru", "zoho.com", "gmx.com", "gmx.net", "protonmail.com", "proton.me"];
 const BASE: Record<EndpointKind, number> = {telegram: 1, ddns: 1, ip: 2, webhook: 2, tunnel: 2, panel: 3, email: 4, firebase: 5, url: 6};
 const CAPS: Partial<Record<EndpointKind, number>> = {url: 8, panel: 10, firebase: 4, email: 4};
-const hidden = (source: string) => /^(?:deobfuscated|native)/.test(source);
+// Only deliberate obfuscation is strong context. Native libraries are full of dotted version numbers ("6.7.8.5" in libvlc),
+// so their bare IPs need a port or URL like any other string.
+const hidden = (source: string) => source.startsWith("deobfuscated");
+// "example" in many languages (localized help texts ship hosts like exemple.duckdns.org) and other sample placeholders.
+const PLACEHOLDER = /(?:^|\.)(?:example|exemple|ejemplo|esempio|exemplo|exempel|beispiel|eksempel|esimerkki|voorbeeld|przyklad|przykład|contoh|ornek|örnek|primer|primjer|priklad|příklad|pelda|példa|paradigma|yourdomain|your-domain|mydomain|my-domain|yourserver|myserver|yourhost|myhost|sample|domain)[.-]/i;
 const owner = (ref: string) => ref.slice(0, ref.indexOf(";->") + 1);
 
 export class EndpointCollector {
@@ -92,7 +96,7 @@ function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored
     // Bot API on api.telegram.org, or relayed through the attacker's own proxy (e.g. a workers.dev "/bot<token>/sendMessage").
     if (host === "api.telegram.org" || /^\/bot[^/]*\/(?:send\w+|getUpdates|getMe|setWebhook|getFile|forwardMessage)\b/i.test(path)) {push("telegram", value, host, port); continue;}
     if (/^(?:www\.|ptb\.|canary\.)?discord(?:app)?\.com$/.test(host) && /^\/api\/webhooks\//i.test(path) || host === "hooks.slack.com" && /^\/services\//i.test(path)) {push("webhook", value, host, port); continue;}
-    if (under(host, BENIGN) || under(host, QUIET) || /(?:^|\.)example\./.test(host)) continue;
+    if (under(host, BENIGN) || under(host, QUIET) || PLACEHOLDER.test(host)) continue;
     if (under(host, FIREBASE)) {push("firebase", value, host, port); continue;}
     const zone = zoneOf(host); if (zone) {if (customerHost(host)) push(zone as EndpointKind, value, host, port); continue;}
     if (under(host, SHARED)) continue;
@@ -115,7 +119,7 @@ function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored
   }
   if (/smtp\./i.test(rest)) for (const m of rest.matchAll(SMTP)) {const host = m[1].toLowerCase(), port = m[2] && validPort(m[2]) ? Number(m[2]) : undefined; if (DOMAIN.test(host)) push("email", `${host}${port ? `:${port}` : ""}`, host, port);}
   if (smtp && rest.includes("@")) for (const m of rest.matchAll(EMAIL)) {
-    const host = m[1].toLowerCase(); if (!DOMAIN.test(host) || under(host, BENIGN) || under(host, QUIET) || /(?:^|\.)example\.|\.(?:png|jpe?g|gif|webp|svg|xml|json)$/.test(host)) continue;
+    const host = m[1].toLowerCase(); if (!DOMAIN.test(host) || under(host, BENIGN) || under(host, QUIET) || PLACEHOLDER.test(host) || /\.(?:png|jpe?g|gif|webp|svg|xml|json)$/.test(host)) continue;
     push("email", m[0].toLowerCase(), host);
   }
   return out;
