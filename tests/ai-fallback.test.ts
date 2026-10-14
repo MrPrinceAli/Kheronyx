@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { assess } from "../lib/ai";
+import { assess, orderModels } from "../lib/ai";
 import type { Artifact } from "../lib/types";
 
 const artifact:Artifact={filename:"test.jpg",kind:"jpg",size:100,sha256:"a".repeat(64),metadata:{dimensions:{width:1,height:1}},strings:[],urls:[],indicators:[],limitations:["Static analysis only"],incomplete:false};
@@ -56,4 +56,8 @@ test("a comma-separated backup chain is tried in order until one model answers",
     assert.deepEqual(calls.map(c=>c.model),["gpt-6-astra","gpt-6-sol","gemini-3.8-flash"]);
     assert.equal(calls[2].temperature,0.1);assert.equal(calls[2].reasoning_effort,undefined);
   },"gpt-6-sol, gemini-3.8-flash ,gpt-6.1-sol");
+});
+test("recently slow models are moved to the end of the chain, keeping their relative order",()=>{
+  assert.deepEqual(orderModels(["a","b","c","d"],new Set(["a","c"])),["b","d","a","c"]);
+  assert.deepEqual(orderModels(["a","b"],new Set()),["a","b"]);
 });

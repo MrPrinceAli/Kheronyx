@@ -38,7 +38,7 @@ export function Landing() {
         <div className="eyebrow hero-features">
           <span className="hero-feature"><ScanLine size={12} strokeWidth={1.5} aria-hidden="true"/>STATIC INTELLIGENCE</span>
           <span className="hero-feature-divider" aria-hidden="true">·</span>
-          <span className="hero-feature hero-feature-ai"><img className="hero-feature-logo" src="/openai.svg" width={12} height={12} alt="" aria-hidden="true"/>GPT-6 Astra Assisted</span>
+          <span className="hero-feature hero-feature-ai"><img className="hero-feature-logo" src="/openai.svg" width={12} height={12} alt="" aria-hidden="true"/>GPT-6 Sol Assisted</span>
         </div>
         <h1>Kheronyx<span className="title-dot">.</span></h1>
         <p className="hero-tagline">Revealing the hidden depth.</p>
