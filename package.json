@@ -32,5 +32,8 @@
     "@types/ws": "^8.18.2",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
-  }
+  },
+  "license": "MIT",
+  "description": "AI-assisted static file intelligence for spotting scam APKs, malicious EXEs and weaponized PDFs.",
+  "author": "Viclatess"
 }

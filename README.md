@@ -1,74 +1,223 @@
+<div align="center">
+
+<img src="public/icon.svg" width="96" alt="Kheronyx eye logo"/>
+
 # Kheronyx
 
-A private, minimal file intelligence workspace. Landing page + password-only analysis dashboard. Supports PDF, APK, EXE, PNG, JPG/JPEG; DMG is coming soon.
+### 👁️ Revealing the hidden depth.
 
-Production: https://kheronyx.vercel.app · Repository: https://github.com/MrPrinceAli/Kheronyx (private). Supabase resources are installed in the user-selected `pelita` project, under Kheronyx-specific names. Credentials stay in the ignored local environment file and server environment variables.
+**AI-assisted static file intelligence for unmasking scam APKs, malicious EXEs and weaponized PDFs. It never runs the file.**
 
-## Run locally
+<a href="https://kheronyx.vercel.app"><img src="https://img.shields.io/badge/live-kheronyx.vercel.app-111?style=for-the-badge&logo=vercel&logoColor=white" alt="Live site"/></a>
+
+<img src="https://img.shields.io/badge/Next.js-16-000?style=flat-square&logo=nextdotjs" alt="Next.js 16"/>
+<img src="https://img.shields.io/badge/React-19-149ECA?style=flat-square&logo=react&logoColor=white" alt="React 19"/>
+<img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"/>
+<img src="https://img.shields.io/badge/WebGL-shader-990000?style=flat-square&logo=webgl&logoColor=white" alt="WebGL"/>
+<img src="https://img.shields.io/badge/Supabase-Postgres%20%2B%20pg__cron-3FCF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase"/>
+<img src="https://img.shields.io/badge/Vercel-Blob%20%2B%20Functions-000?style=flat-square&logo=vercel" alt="Vercel"/>
+<br/>
+<img src="https://img.shields.io/badge/tests-76%20passing-2ea44f?style=flat-square&logo=checkmarx&logoColor=white" alt="76 tests passing"/>
+<img src="https://img.shields.io/badge/real%20malware%20detected-45%2F45-2ea44f?style=flat-square&logo=android&logoColor=white" alt="45 of 45 real samples flagged"/>
+<img src="https://img.shields.io/badge/VirusTotal-integrated-394EFF?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal"/>
+<img src="https://img.shields.io/badge/abuse.ch-threat%20intel-c0392b?style=flat-square" alt="abuse.ch"/>
+<img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license"/>
+<img src="https://img.shields.io/badge/made%20in-Indonesia%20🇮🇩-red?style=flat-square" alt="Made in Indonesia"/>
+
+<br/><br/>
+
+<img src="docs/screenshots/landing.png" alt="Kheronyx landing page" width="880"/>
+
+</div>
+
+---
+
+## 🧭 Why Kheronyx?
+
+In Indonesia, scams arrive as harmless-looking files: *"Undangan Pernikahan.apk"*, *"Cek Resi Paket.apk"*, *"Tagihan PLN.pdf"*. Once installed, these apps quietly read your SMS, grab your banking OTP and forward it to a Telegram bot.
+
+Kheronyx lets anyone **look inside a file before opening it**. It takes the file apart byte by byte, checks it against global threat intelligence, and has an AI explain the risk in plain Bahasa Indonesia: **Aman · Waspada · Bahaya · Sangat bahaya**.
+
+> [!IMPORTANT]
+> Kheronyx performs **static analysis only**. Uploaded files are parsed, never executed. A clean result is never a guarantee of safety, and the app says so in every report.
+
+## ✨ Highlights
+
+| | |
+|---|---|
+| 🔬 **Deep static dissection** | Dalvik bytecode, binary XML manifests, signing blocks, ELF/PE/.NET metadata and PDF object streams are all parsed in pure TypeScript, with every parser bounded and fuzz-tested. |
+| 🕵️ **Built for scam APKs** | Detects SMS/OTP stealers, Telegram-bot exfiltration, accessibility-abusing banking trojans, overlays, hidden icons, droppers and ~19 Android packers. |
+| 🧬 **Knows who called what** | Decoded call sites tell app code from libraries, e.g. *"`SmsReceiver.onReceive` reads SMS **and** sends it to the panel"*. |
+| 🧩 **Sees through tricks** | BadPack ZIP headers, empty `classes.dex`, zeroed manifest headers, XOR/base64/char-array string hiding, repackaged APKs (v2/v3 signature verification). |
+| 🛰️ **Threat intelligence** | VirusTotal reputation, abuse.ch **MalwareBazaar / URLhaus / ThreatFox** lookups, and **RDAP** domain age for every server found inside the file. |
+| 🤖 **AI verdict, with guardrails** | A schema-validated LLM report that must cite extracted evidence. Missing evidence can never produce a "safe" verdict. |
+| 🔗 **Campaign tracking** | Signer certificate SHA-256 values and redacted bot IDs link samples from the same scam actor. |
+| ☁️ **Close the tab, keep the job** | Analyses run as durable background jobs with automatic retries (Supabase `pg_cron`) and can be cancelled. |
+| 🌫️ **Cinematic UX** | A WebGL fractal-noise smoke transition pours out from behind the landing eye. |
+
+## 📸 A real scam APK, dissected
+
+A real **SMSspy** sample from MalwareBazaar, renamed the way victims receive it:
+
+<div align="center">
+<img src="docs/screenshots/report.png" alt="Kheronyx report for a real SMS stealer" width="720"/>
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/threat-intel.png" alt="Threat intelligence panel"/></td>
+<td width="25%"><img src="docs/screenshots/smoke-2.png" alt="WebGL smoke transition"/></td>
+<td width="25%"><img src="docs/screenshots/mobile.png" alt="Mobile dashboard"/></td>
+</tr>
+<tr>
+<td align="center"><sub>abuse.ch + RDAP intelligence</sub></td>
+<td align="center"><sub>Smoke login transition</sub></td>
+<td align="center"><sub>Responsive dashboard</sub></td>
+</tr>
+</table>
+
+## 🎯 Measured on real malware
+
+Measured with `scripts/eval-corpus.mts` on real samples from [MalwareBazaar](https://bazaar.abuse.ch). The run used the static extractor only, with no AI, no VirusTotal, and nothing executed:
+
+| Family | Samples | 🔴 High / critical | 🟠 At least medium | Parse failures | Avg time |
+|---|:-:|:-:|:-:|:-:|:-:|
+| **SMSspy** (SMS/OTP stealers) | 30 | **93%** | **100%** | 0% | 91 ms |
+| **SpyNote** (Android RAT / banker) | 15 | **100%** | **100%** | 0% | 87 ms |
+
+The first run exposed four real-world anti-analysis tricks: empty `classes.dex`, BadPack compression IDs, manifests with lying ZIP sizes, and poisoned string pools. Each is now handled and covered by tests.
+
+## 🔬 How it works
+
+```mermaid
+flowchart LR
+    U([🧑 User]) -->|multipart upload| B[(Vercel Blob<br/>private quarantine)]
+    U -->|enqueue| J[[Job queue<br/>Supabase]]
+    J --> W{{Worker<br/>after · 300 s}}
+    B --> W
+    W --> X[🔬 Static extractor]
+    X --> VT[VirusTotal]
+    X --> AB[abuse.ch<br/>MalwareBazaar · URLhaus · ThreatFox]
+    X --> RD[RDAP<br/>domain age]
+    VT & AB & RD --> AI[🤖 AI assessment<br/>schema-validated]
+    AI --> R[(Report)]
+    W -. delete .-> B
+    C([⏰ pg_cron · every minute]) -. retry stalled jobs .-> W
+```
+
+1. **Upload**: the browser streams the file straight into a private Vercel Blob store (multipart, live `17 / 48 MB` progress). Up to **250 MB**, PDFs up to 50 MB.
+2. **Queue**: a job row is created and the worker starts in `after()`, so the user may close the tab.
+3. **Dissect**: the extractor validates magic bytes, then parses the format (see below).
+4. **Reputation**: VirusTotal and abuse.ch (hash, servers and URLs) are queried in parallel with RDAP domain ages.
+5. **Assess**: only bounded evidence (never the raw file) goes to the LLM, whose JSON answer is validated with Zod.
+6. **Clean up**: the quarantined file is deleted. Transient failures retry with backoff (30 s, 1 m, 2 m, 5 m), resumed by a Supabase `pg_cron` heartbeat.
+
+## 🧬 What gets dissected
+
+<details open>
+<summary><b>📱 APK</b></summary>
+
+- **Manifest**: permissions, components, intent filters, launcher visibility. Tolerates BadPack and corrupted string pools.
+- **Every DEX**: string/type/method/class tables, plus **Dalvik bytecode decoding** for call sites (app code vs. known SDKs) and indirect subclasses.
+- **Behaviors**: SMS read/send, OTP interception, accessibility, overlays, notification listeners, device admin, USSD call forwarding, hidden icon, APK installs, dynamic code loading, contacts, call logs, keyboard capture.
+- **Exfiltration**: Telegram bot tokens (always redacted), Discord/Slack webhooks, PHP panels, raw-IP endpoints, Firebase.
+- **Deobfuscation**: base64, hex, reversed, char/byte arrays, single-byte XOR, StringBuilder chains.
+- **Packers**: Jiagu, Bangcle/SecNeo, ijiami, Legu and ~15 more, plus stub-only and empty-DEX detection.
+- **Native code**: ELF `.so` symbols, JNI exports, embedded endpoints, anti-debug markers.
+- **Signing**: v1/v2/v3 certificates, debug/test keys, and **cryptographic v2/v3 verification** to catch repackaged apps.
+</details>
+
+<details>
+<summary><b>🪟 EXE / DLL</b></summary>
+
+- PE32/PE32+ headers, sections, entropy, full import and delay-load tables, grouped into injection, keylogging, credential theft, download-and-execute and ransomware patterns.
+- Resources: version info, manifest (admin elevation), embedded PE/scripts/archives, **brand impersonation** (claims "BCA" or "Microsoft" but isn't signed by them).
+- **.NET metadata**: types, member refs, P/Invoke, user strings, stealer/RAT markers and obfuscators.
+- Packers, installers and compilers (UPX, Themida, NSIS, Inno, PyInstaller, Go, …), Authenticode signer, overlay classification.
+</details>
+
+<details>
+<summary><b>📄 PDF · 🖼️ PNG/JPG</b></summary>
+
+- PDF.js (eval disabled): text, links and JavaScript from the first 30 pages, attachments, and `/OpenAction`, `/Launch`, `/AA`, `/SubmitForm` and `/RichMedia` inside compressed object streams.
+- Images: chunk/segment structure and data appended after the image end. Pixels are never rendered.
+</details>
+
+## 🛡️ Security model
+
+- 🔐 **Single-password access** with HMAC-signed sessions. Only *wrong* passwords count toward the 8-per-15-minutes lockout.
+- 🧱 **No execution, ever.** Parsers are bounded in time, memory and recursion, and fuzzed with thousands of corrupted inputs.
+- 🗄️ **Private by default**: private Blob store, RLS-locked Supabase tables, server-only secrets, strict CSP.
+- 🙈 **Secret hygiene**: Telegram bot secrets are masked everywhere, even when parsing aborts midway.
+- 🚦 **Fair use**: rate limits on analyses, uploads, VirusTotal, abuse.ch, RDAP and large files (to protect the Hobby Blob allowance).
+
+## 🚀 Getting started
 
 ```sh
+git clone https://github.com/MrPrinceAli/Kheronyx.git
+cd Kheronyx
 npm ci
-cp .env.example .env
+cp .env.example .env   # fill in the values below
 npm run dev
 ```
 
-Fill `ACCESS_PASSWORD`, a random `SESSION_SECRET`, and `AI_API_KEY` in `.env`. Fill `VIRUSTOTAL_API_KEY` to activate antivirus reputation checks. This workspace includes a preconfigured ignored `.env`; keep its existing values when adding keys. Gateway: `https://tokengateway.ai.id/v1`. Primary: `AI_MODEL=gpt-6-astra`. Backup: `AI_FALLBACK_MODEL=gpt-6.1-sol`. Model IDs must be available to your gateway account. Keys and password validation stay server-side.
+| Variable | Purpose |
+|---|---|
+| `ACCESS_PASSWORD` / `ACCESS_PASSWORD_HASH` | Login password (use the hash in production: `node scripts/password-hash.mjs`) |
+| `SESSION_SECRET` | HMAC key for sessions |
+| `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL` | OpenAI-compatible gateway for the assessment |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob private store (enables 250 MB uploads and background jobs) |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Reports, jobs, rate limits |
+| `VIRUSTOTAL_API_KEY` | Hash reputation (optional upload) |
+| `ABUSE_CH_AUTH_KEY` | MalwareBazaar, URLhaus, ThreatFox ([free key](https://auth.abuse.ch)) |
+| `CRON_SECRET`, `JOBS_SECRET` | Daily maintenance and the per-minute job scheduler |
 
-The backup is tried once if the primary is unavailable, rate limited, times out, or returns an invalid/incomplete report. Invalid keys, insufficient balance, general bad requests, and explicit model refusals are returned as errors. Both failures produce an error, never a fabricated verdict. Reports record the model that actually returned a valid assessment. Requests to these reasoning GPT models omit temperature and use medium reasoning with an 8,000-token combined reasoning/output cap. Each model has a 65-second request timeout; the combined budget leaves room for VirusTotal in the 240-second analysis route. Leave `AI_FALLBACK_MODEL` explicitly empty to disable the backup.
+Apply the SQL in [`supabase/migrations`](supabase/migrations) to your project. The scheduler migration explains the shared Vault secret it needs.
 
-## Vercel
-
-Connect this repository and deploy as Next.js. Add the same variables under **Project → Settings → Environment Variables**, then redeploy. `.env` is intentionally excluded from Git and deployment uploads: filling the local file does not update production. Production uses `ACCESS_PASSWORD_HASH` instead of storing the shared password in application source. Generate a hash via stdin:
-
-```sh
-read -s KHERONYX_PASSWORD
-printf '%s' "$KHERONYX_PASSWORD" | node scripts/password-hash.mjs
-unset KHERONYX_PASSWORD
-```
-
-The Vercel CLI can read secrets through stdin: `vercel env add AI_API_KEY production,preview --sensitive`. Do not put the key in `NEXT_PUBLIC_*` variables.
-
-After filling the local `.env`, run `npm run deploy` to synchronize server environment variables, including `VIRUSTOTAL_API_KEY`, through stdin and redeploy the linked project. The sync script hashes the access password for production and never prints secret values.
-
-## Interface
-
-The landing eye uses a subtle corneal reflection instead of a scan beam. Successful login starts a radial dark transition from the eye, keeps the eye visible while the protected dashboard loads, then fades into the workspace. Incorrect passwords stay on the login form. A navigation timeout restores the form, and reduced-motion preferences skip the cinematic transition. The shared layout owns the overlay so it survives the route change. A small animated signal with **Connected** identifies the configured AI connection in the dashboard.
-
-## VirusTotal
-
-Every analysis performs a [SHA-256 reputation lookup](https://docs.virustotal.com/reference/file-info) when `VIRUSTOTAL_API_KEY` is set. Existing antivirus counts, engine detections, and the original analysis date appear in the report and are supplied to the AI. Missing keys, unknown hashes, quota errors, invalid responses and pending scans are shown explicitly; none is treated as a clean antivirus result.
-
-**Izinkan scan dengan VirusTotal** is checked by default, as configured by the owner. The dashboard explains that a file is submitted only when VirusTotal has no existing record. Users can uncheck it before analysis; that choice persists while the dashboard remains open, including when another file is selected. [Submitted files enter VirusTotal's dataset](https://docs.virustotal.com/reference/files-scan), so the sharing notice appears while submission is enabled. Raw bytes are sent only with this option enabled, under a hash-based filename. Files over 32 MB use the official large-upload URL; URLs are restricted to the VirusTotal HTTPS origin and redirects are blocked. A short wait checks for completion; queued or partial results stay pending. **Perbarui hasil** later fetches the file's reputation without uploading again, updates the report and preserves the initial AI explanation. Local quarantine deletion does not remove copies submitted to VirusTotal.
-
-The shared key is limited by Kheronyx to 4 requests per minute and 500 per day, with counters persisted in Supabase when configured. This matches the [Public API limits](https://docs.virustotal.com/reference/public-vs-premium-api); that API also prohibits commercial products/services. Check the entitlement of the key used for deployment. Provider quotas are displayed without suppressing static analysis. Malicious detections set a conservative minimum risk of high, suspicious detections a minimum of medium; false positives remain possible. Zero detections never lowers an existing concerning static verdict or proves safety. Old reports remain readable without a VirusTotal field. Results are stored inside the existing report JSON; no database migration is needed.
-
-## Supabase
-
-Run `supabase/migrations/202610130001_kheronyx.sql` against the selected project. Configure server-only `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (a current Supabase secret key also works), and `SUPABASE_BUCKET=kheronyx-quarantine`.
-
-Uploads go directly to a **private quarantine bucket** using server-issued signed upload URLs, avoiding Vercel's request-body limit. The server binds object paths to the authenticated session, checks file signatures and size, and deletes uploads after analysis. A daily Vercel cron deletes abandoned uploads older than 24 hours (typically removed within 48 hours) and reports older than 30 days. Set a random `CRON_SECRET` in Vercel for the cleanup route. Stored reports are accessible only through authenticated server routes; there are no public table/storage policies.
-
-Limits: 250 MB per file (PDF 50 MB) with Vercel Blob (`BLOB_READ_WRITE_TOKEN`, private store; browser uploads go straight to Blob in multipart), 40 MB with Supabase Storage only, 4 MB for direct upload without storage. Files above 50 MB are capped at 30 per 30 days to stay inside the Hobby Blob transfer allowance; VirusTotal upload is skipped above 100 MB (hash lookup only). 20 analyses per authenticated session per hour, 12 upload URLs per ten minutes, 8 password attempts per IP per 15 minutes. Rate counters persist in Supabase when configured; local fallback is process memory.
-
-## What the analysis does
-
-- Validates filename type against bytes; calculates SHA-256.
-- PDF: reads bounded text/links, metadata, actions, and attachments metadata with PDF.js evaluation disabled. Up to ten pages.
-- APK: reads the archive directory, bounded binary Android manifest, permissions/components, and sampled DEX strings. Bounded decompression; nothing is extracted onto the filesystem.
-- EXE: PE architecture, sections, entropy, flags, and imported library names; program is never run.
-- PNG/JPG: dimensions, structural metadata, and appended-data indicators. Pixels are never rendered.
-- Sends extracted evidence to the configured gateway for structured AI assessment; no raw executable upload to the model. Extracted document content can contain sensitive data, so the upload screen discloses AI processing.
-- Fetches VirusTotal evidence before AI assessment when configured; optional new-file scanning requires the sharing selection. Completed detections cannot be dismissed by the AI.
-- Validates the AI response; incomplete extraction produces an unknown risk verdict unless independent VirusTotal detections justify concern. AI provider or schema failures produce errors, never fabricated reports. VirusTotal failures remain explicit coverage limitations.
-
-**Local inspection is AI-assisted static analysis; antivirus evidence comes from VirusTotal when configured.** Kheronyx does not execute files or establish that a file is safe or free of malware, verify Authenticode/APK signatures, detect all steganography, or fully decompile code. Treat model confidence as interpretation confidence, not a probability of safety. Shared password holders can access the shared report history.
-
-## Validation
+## 🧪 Testing & evaluation
 
 ```sh
 npm run typecheck
-npm test
+npm test            # 76 tests: parsers, fuzzing, signing, jobs, threat intel
 npm run build
+
+# Detection accuracy on real samples (never executed, stored read-only in .corpus/)
+ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.mts fetch --tag SMSspy --limit 30
+npx tsx scripts/eval-corpus.mts run .corpus/SMSspy
 ```
 
-Security tests cover session forgery/expiry, signature mismatches, bounded decompression, malformed binaries, and unknown verdict enforcement. Browser verification covers landing/login, protected dashboard, file selection/errors, report rendering, downloads, and mobile layouts. A real gateway verdict still requires a valid account key.
+## 📁 Project structure
+
+```
+app/                 Next.js routes: landing, dashboard, API (uploads, jobs, reports, auth, cron)
+components/          UI, WebGL smoke canvas, report panels
+lib/
+  extract.ts         Format dispatch, bounding and redaction
+  dex.ts             DEX tables + Dalvik bytecode decoder
+  behaviors.ts       Scam/banking-trojan behavior catalog
+  apk-*.ts, elf.ts   Signing, packers, payloads, native libraries
+  pe-*.ts, dotnet.ts PE imports/resources/packers, .NET metadata
+  threat-intel.ts    abuse.ch + RDAP
+  virustotal.ts      VirusTotal
+  jobs.ts            Durable background jobs with retries
+  ai.ts              LLM assessment with schema validation
+scripts/             Corpus evaluation, env sync, password hashing
+supabase/migrations  Tables, job claim function, pg_cron scheduler
+tests/               node:test suites incl. fuzzing and real-world trick fixtures
+```
+
+## ⚠️ Disclaimer
+
+Kheronyx is a research and awareness tool. Static analysis can miss malware that downloads or decrypts its payload at runtime, and antivirus/threat-intel absence is not proof of safety. Always install apps from official stores only. To report Indonesian scams, use [aduankonten.id](https://aduankonten.id) and your bank's official channels.
+
+## 🙏 Acknowledgements
+
+[VirusTotal](https://www.virustotal.com) · [abuse.ch](https://abuse.ch) (MalwareBazaar, URLhaus, ThreatFox) · [RDAP](https://about.rdap.org) · [PDF.js](https://mozilla.github.io/pdf.js/) · [Vercel](https://vercel.com) · [Supabase](https://supabase.com)
+
+<div align="center">
+
+**Built with 🖤 by [Viclatess](https://github.com/MrPrinceAli)**
+
+<sub>If Kheronyx helped you, consider leaving a ⭐. It helps more people find it.</sub>
+
+</div>
