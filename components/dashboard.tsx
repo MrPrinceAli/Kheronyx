@@ -9,6 +9,7 @@ import { EngineStatus } from "./engine-status";
 import { VirusTotalPanel } from "./virus-total-panel";
 import { ThreatIntelPanel } from "./threat-intel-panel";
 import { ImpactPanel } from "./impact-panel";
+import { EndpointPanel } from "./endpoint-panel";
 import { updateVirusTotalReport } from "@/lib/virus-total-evidence";
 import type { AppConfig, FileKind, Report, Risk } from "@/lib/types";
 import type { Job } from "@/lib/jobs";
@@ -94,6 +95,7 @@ export function Dashboard({config}:{config:AppConfig}) {
       {active?<section className="panel report-panel" ref={resultRef}><div className="panel-heading report-heading"><div><div className="eyebrow">ANALYSIS REPORT</div><h2>{active.filename}</h2><p>{active.kind.toUpperCase()} <span>·</span> {bytes(active.size)} <span>·</span> {date(active.createdAt)}</p></div><button className="button button-light" onClick={download}><ArrowDownToLine size={15}/><span>Unduh JSON</span></button></div>
         <div className={`report-verdict verdict-${active.assessment.risk}`}><div className="verdict-icon">{active.assessment.risk==="low"?<ShieldCheck size={29} strokeWidth={1.5}/>:active.assessment.risk==="unknown"?<CircleAlert size={29} strokeWidth={1.5}/>:<ShieldAlert size={29} strokeWidth={1.5}/>}</div><div><RiskBadge risk={active.assessment.risk}/><h3>{riskDescription[active.assessment.risk]}</h3><p>{active.assessment.summary}</p></div></div>
         <ImpactPanel report={active}/>
+        <EndpointPanel report={active}/>
         <VirusTotalPanel result={active.artifact.virusTotal} ready={config.virusTotalReady} busy={vtRefreshing} onRefresh={refreshVirusTotal}/>
         <ThreatIntelPanel result={active.artifact.threatIntel}/>
         <div className="report-columns"><div className="report-findings"><h3><Activity size={16}/>Temuan utama<span className="count-label">{active.assessment.findings.length}</span></h3>{active.assessment.findings.length?active.assessment.findings.map((finding,i)=><div className="finding" key={i}><span className={`finding-dot risk-${finding.severity}`}/><div><h4>{finding.title}</h4><p>{finding.explanation}</p><div className="finding-evidence"><Fingerprint size={12}/><code>{finding.evidence}</code></div></div></div>):<div className="no-findings"><Check size={17}/><p>Tidak ada temuan mencurigakan pada bukti yang diperiksa. Ini belum menjamin seluruh file aman.</p></div>}</div><div className="report-recommendations"><h3><ShieldCheck size={16}/>Langkah berikutnya</h3>{active.assessment.recommendations.map((r,i)=><div className="recommendation" key={i}><span>{String(i+1).padStart(2,"0")}</span><p>{r}</p></div>)}<div className="confidence-note"><Info size={14}/><span>Keyakinan interpretasi: <strong>{({low:"rendah",medium:"sedang",high:"tinggi"})[active.assessment.confidence]}</strong></span></div></div></div>

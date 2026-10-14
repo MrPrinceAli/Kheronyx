@@ -1,4 +1,6 @@
 import { libraryClass, type DexCode } from "./dex";
+import { DDNS_HINT } from "./hosts";
+import type { Endpoint } from "./endpoints";
 // Behavior catalog for Android scam/banking-trojan/SMS-stealer patterns. Inputs are parser-derived facts (DEX method/field
 // references, subclassed framework classes, manifest permissions/components, strings); nothing is executed.
 export type Severity = "low" | "medium" | "high" | "critical";
@@ -60,7 +62,7 @@ export const trackedRef = (ref: string) => refRules(ref).length > 0;
 const EXFIL = /api\.telegram\.org|(?<![\d])\d{6,12}:AA[\w-]{30,40}|discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com|firebaseio\.com|firebasedatabase\.app|ngrok|trycloudflare|webhook\.site|pipedream|\b(?:https?|wss?|tcp):\/\/(?:\d{1,3}\.){3}\d{1,3}|https?:\/\/[^\s"'<>]+\.php\b|\bsmtp\.[a-z0-9-]+\./i;
 export const trackedString = (s: string) => s.length <= 1200 && EXFIL.test(s);
 // Recovered (deobfuscated) values worth reporting; STRONG ones are reported even when hidden inside library code.
-export const revealable = (s: string) => /:\/\/|api\.telegram|(?<![\d])\d{6,12}:AA[\w-]{30,40}|discord|hooks\.slack|chat_id|content:\/\/(?:sms|contacts|call_log)|\bsmtp\.|SMS_RECEIVED|\b(?:\d{1,3}\.){3}\d{1,3}\b|\.php\b|firebaseio|ngrok|trycloudflare|webhook/i.test(s);
+export const revealable = (s: string) => DDNS_HINT.test(s) || /:\/\/|api\.telegram|(?<![\d])\d{6,12}:AA[\w-]{30,40}|discord|hooks\.slack|chat_id|content:\/\/(?:sms|contacts|call_log)|\bsmtp\.|SMS_RECEIVED|\b(?:\d{1,3}\.){3}\d{1,3}\b|\.php\b|firebaseio|ngrok|trycloudflare|webhook/i.test(s);
 const STRONG = /api\.telegram|(?<![\d])\d{6,12}:AA[\w-]{30,40}|discord(?:app)?\.com\/api\/webhooks|hooks\.slack|ngrok|trycloudflare|webhook\.site|pipedream/i;
 // Strings: one cheap prefilter, then the specific category patterns. Token/webhook secrets are redacted before storage.
 const TOKEN = /(?<![\d])(\d{6,12}):(AA[\w-]{30,40})(?![\w-])/;
@@ -210,7 +212,8 @@ const join = (label: string, xs: string[], n = 5) => xs.length ? `${label}: ${xs
 // Two passes when bytecode attribution is available: `strict` ignores APIs called only from known library code and
 // library-only subclasses; behaviors that exist only in the lenient pass are kept as low-severity "library only".
 const COMBOS = new Set(["sms_stealer", "banking_trojan", "dropper", "otp_intercept"]);
-export function evaluate(sig: Signals, m: Manifest, extra: Behavior[] = [], context: {certSha256?: string} = {}): Behavior[] {
+type Context = {certSha256?: string; endpoints?: Endpoint[]};
+export function evaluate(sig: Signals, m: Manifest, extra: Behavior[] = [], context: Context = {}): Behavior[] {
   sig.resolve();
   const strict = rules(sig, m, extra, context, true);
   if (![...sig.apis.values()].some(set => [...set].some(e => sig.libOnly(e))) && !sig.libSubclasses.size && !sig.hidden.some(h => h.lib)) return strict;
@@ -222,7 +225,7 @@ export function evaluate(sig: Signals, m: Manifest, extra: Behavior[] = [], cont
   }
   return strict.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
 }
-function rules(sig: Signals, m: Manifest, extra: Behavior[], context: {certSha256?: string}, strict: boolean): Behavior[] {
+function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, strict: boolean): Behavior[] {
   const out: Behavior[] = extra.map(b => ({...b})), has = (id: string) => out.find(b => b.id === id);
   const api = (...keys: string[]) => keys.flatMap(k => [...sig.apis.get(k) || []]).filter(e => !strict || !sig.libOnly(e));
   const calls = (...keys: string[]) => strict ? join("dipanggil oleh", sig.callers(keys), 3) : "";
@@ -274,12 +277,16 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: {certSha25
   add("obfuscated_strings", "String disamarkan berisi alamat/rahasia", secret.some(h => STRONG.test(h.value)) ? "high" : "medium", secret.slice(0, 6).map(h => `${redactSecrets(h.value).slice(0, 110)} (disamarkan: ${h.technique})${h.where ? ` di ${member(h.where)}` : ""}`));
   // Exfiltration channels.
   const bots = [...sig.bots], chats = [...sig.chats];
-  add("exfil_telegram", "Mengirim data ke bot Telegram", "high", [join("bot (token disamarkan)", bots), join("chat_id", chats), join("string", str("telegram"), 2)]);
   add("exfil_webhook", "Mengirim data ke webhook Discord/Slack", "high", [join("webhook", str("discord", "slack"), 3)]);
   add("exfil_firebase", "Menggunakan Firebase Realtime Database", "low", [join("URL", str("firebase"), 3)]);
-  add("exfil_ip", "Server dengan alamat IP langsung", "medium", [join("URL", str("ipUrl"), 3)]);
+  // Endpoints from lib/endpoints.ts: bare "IP:port" / deobfuscated IPs and DDNS/tunnel hosts that are not URLs.
+  const eps = context.endpoints || [], bare = (k: string) => eps.filter(e => e.kind === k && !e.value.includes("://"));
+  const ep = (e: Endpoint) => `${e.value} (${sourceLabel(e.source)})${e.via ? ` di ${e.via}` : ""}`;
+  // Bot API relayed through the attacker's own host (e.g. workers.dev "/bot<token>/sendMessage") counts as Telegram too.
+  add("exfil_telegram", "Mengirim data ke bot Telegram", "high", [join("bot (token disamarkan)", bots), join("chat_id", chats), join("string", str("telegram"), 2), join("lewat proxy", eps.filter(e => e.kind === "telegram" && e.host !== "api.telegram.org").map(ep), 2)]);
+  add("exfil_ip", "Server dengan alamat IP langsung", "medium", [join("URL", str("ipUrl"), 3), join("server", bare("ip").map(ep), 3)]);
   add("exfil_panel", "Endpoint panel web (PHP)", "medium", [join("URL", str("php"), 3)]);
-  add("exfil_tunnel", "Layanan tunnel/webhook sementara", "high", [join("URL", str("tunnel"), 3)]);
+  add("exfil_tunnel", "Layanan tunnel/webhook sementara", "high", [join("URL", str("tunnel"), 3), join("host", bare("tunnel").map(ep), 3)]);
   add("exfil_email", "Mengirim data lewat email (SMTP)", "medium", [join("API", api("smtp")), join("string", str("smtp"), 2)]);
   add("lure_keywords", "Kata kunci umpan penipuan (konteks Indonesia)", "low", [join("string", str("lure"), 6)]);
   // Combined patterns.
@@ -294,7 +301,16 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: {certSha25
   const a11y = has("accessibility");
   if (a11y && (has("overlay") || has("notification_listener") || has("sms_read"))) add("banking_trojan", "Pola trojan perbankan (aksesibilitas + overlay/penyadapan)", a11y.severity === "high" && has("overlay") && exfil.length ? "critical" : "high", [`kombinasi: ${["accessibility", "overlay", "notification_listener", "sms_read", "device_admin"].filter(has).join(" + ")}`, a11y.evidence[0], campaign]);
   if ((hidden || has("boot_persistence") && minimalUi) && (has("install_apps") || has("hidden_payload") || has("dynamic_code"))) add("dropper", "Pola dropper tersembunyi", "high", [`kombinasi: ${["hidden_icon", "install_apps", "hidden_payload", "dynamic_code", "boot_persistence"].filter(has).join(" + ")}`, campaign]);
+  // Raw-socket/DDNS C2 (SpyNote-style RATs): direct IP or dynamic-DNS server; strong with RAT/banking capabilities or when hidden.
+  const direct = eps.filter(e => e.kind === "ip" || e.kind === "ddns");
+  if (direct.length) {
+    const rat = ["banking_trojan", "sms_stealer", "accessibility", "screen_capture", "camera_mic", "notification_listener", "keyboard", "net_rat", "net_keylogger"].filter(has), concealed = direct.filter(e => /^(?:deobfuscated|native)/.test(e.source));
+    add("c2_socket", "Terhubung ke server pelaku lewat IP/DDNS (koneksi langsung)", rat.length || concealed.length ? "high" : "medium", [join("server", direct.map(ep), 4), concealed.length ? "alamat server disembunyikan (disamarkan/kode native): penyamaran yang disengaja" : "", join("API soket", api("net").filter(x => /Socket/.test(x)), 3), rat.length ? `bersama kemampuan: ${rat.join(" + ")}` : ""]);
+  }
   return out.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
 }
+const SOURCE: Record<string, string> = {dex: "kode DEX", payload: "payload tersembunyi", resources: "resource", manifest: "manifest", exe: "string program", dotnet: "string .NET"};
+// Where an endpoint was found (Endpoint.source), in Indonesian.
+export const sourceLabel = (s: string) => s.startsWith("deobfuscated:") ? `disamarkan: ${s.slice(13)}` : s.startsWith("native:") ? `library native ${s.slice(7)}` : SOURCE[s] || s;
 export const behaviorIndicator = (b: Behavior) => ({name: b.name, evidence: `Tingkat ${LABEL[b.severity]}: ${b.evidence.join("; ")}`.slice(0, 600)});
 export const behaviorMetadata = (list: Behavior[]) => list.map(b => ({id: b.id, severity: b.severity, evidence: b.evidence.map(e => e.slice(0, 160))}));

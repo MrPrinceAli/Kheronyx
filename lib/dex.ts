@@ -1,4 +1,4 @@
-import { readable } from "./deobfuscate";
+import { recoverable } from "./deobfuscate";
 // Bounded DEX reader (header, string_ids, type_ids, field_ids, method_ids, class_defs) plus an optional linear
 // Dalvik instruction walk (class_data_item -> encoded_method -> code_item) that records who calls sensitive APIs and
 // recovers simply-obfuscated strings. Bytecode is decoded, never executed; every offset/count is checked first.
@@ -101,7 +101,7 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
     const set = lib ? s.lib : s.app; if (set.size < (lib ? 4 : 48)) set.add(caller);
   };
   const recover = (value: string, technique: string, caller: number, lib: boolean) => {
-    if (out.recovered.length >= MAX_RECOVERED || !readable(value) || seen.has(value)) return; seen.add(value);
+    if (out.recovered.length >= MAX_RECOVERED || !recoverable(value) || seen.has(value)) return; seen.add(value);
     out.recovered.push({value: value.slice(0, 1000), technique, where: methods[caller], lib});
   };
   const vals: (Val | undefined)[] = new Array(65536 + 260), gens = new Uint32Array(65536 + 260); let g = 0;
@@ -175,8 +175,8 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
             const reg = (k: number) => range ? first + k : k < 4 ? b[p + 4 + (k >> 1)] >> (k & 1) * 4 & 15 : a & 15;
             if (count < 1) break;
             const v0 = get(reg(0)), v1 = count > 1 ? get(reg(1)) : undefined;
-            if (kind === 1 && v1 && "a" in v1) {const s = arrText(v1); if (readable(s)) {v1.done = true; recover(s, `array ${v1.w === 1 ? "byte" : "char"} (${v1.src})`, caller, lib);} set(reg(0), {s});}
-            else if (kind === 2 && v0 && "a" in v0) {const s = arrText(v0); if (readable(s)) {v0.done = true; recover(s, `array char (${v0.src})`, caller, lib);} pending = {s};}
+            if (kind === 1 && v1 && "a" in v1) {const s = arrText(v1); if (recoverable(s)) {v1.done = true; recover(s, `array ${v1.w === 1 ? "byte" : "char"} (${v1.src})`, caller, lib);} set(reg(0), {s});}
+            else if (kind === 2 && v0 && "a" in v0) {const s = arrText(v0); if (recoverable(s)) {v0.done = true; recover(s, `array char (${v0.src})`, caller, lib);} pending = {s};}
             else if (kind === 3 && v0 && "sb" in v0) {if (count > 1) {if (v1 && "s" in v1) v0.sb.push(v1.s); else if (!v1 || !("n" in v1)) v0.ok = false;}}
             else if (kind === 4 && v0 && "sb" in v0) {if (v1 && "s" in v1 && v0.sb.length < 64) v0.sb.push(v1.s); else if (v1 && "n" in v1 && v0.sb.length < 64) v0.sb.push(String.fromCharCode(v1.n & 0xffff)); else v0.ok = false; pending = v0;}
             else if (kind === 5 && v0 && "sb" in v0) {const s = v0.sb.join(""); if (v0.ok && v0.sb.length >= 3 && v0.sb.every(part => part.length <= 24)) recover(s, "StringBuilder", caller, lib); pending = {s};}
@@ -195,13 +195,13 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
     // this method (xor-int/lit*) or implied by an "http" prefix.
     for (const arr of arrays) {
       if (arr.a.length < 6 || arr.src === "aput" && !arr.a.some(Boolean)) continue;
-      if (!arr.done) {const plain = arrText(arr); if (readable(plain)) recover(plain, `array ${arr.w === 1 ? "byte" : "char"} (${arr.src})`, caller, lib);}
+      if (!arr.done) {const plain = arrText(arr); if (recoverable(plain)) recover(plain, `array ${arr.w === 1 ? "byte" : "char"} (${arr.src})`, caller, lib);}
       if (arr.w !== 1) continue;
       // XOR-ed literals are often printable too, so a key is always tried; the caller keeps only meaningful values.
       const guess = (arr.a[0] ^ 0x68) & 0xff;
       for (const k of new Set([...keys, guess])) {
         if (!k) continue; const s = arrText(arr, k);
-        if (readable(s) && (keys.includes(k) || /^https?:\/\//.test(s))) {recover(s, `XOR 0x${k.toString(16).padStart(2, "0")}`, caller, lib); break;}
+        if (recoverable(s) && (keys.includes(k) || /^https?:\/\//.test(s))) {recover(s, `XOR 0x${k.toString(16).padStart(2, "0")}`, caller, lib); break;}
       }
     }
   };

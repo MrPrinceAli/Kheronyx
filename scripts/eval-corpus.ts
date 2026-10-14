@@ -2,9 +2,10 @@
 // and parsed by lib/extract.ts (no AI, no VirusTotal), exactly as the server does before the AI step.
 //
 //   Fetch real samples from MalwareBazaar (free Auth-Key from https://auth.abuse.ch):
-//     ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.mts fetch --tag SMSspy --limit 40
+//     ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.ts fetch --tag SMSspy --limit 40
+//     ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.ts fetch --signature AgentTesla --type exe --limit 15
 //   Evaluate a folder (put known-good apps in .corpus/benign to measure false alarms):
-//     npx tsx scripts/eval-corpus.mts run .corpus/SMSspy [--json report.json]
+//     npx tsx scripts/eval-corpus.ts run .corpus/SMSspy [--json report.json]
 //
 // Samples live in .corpus/ (git-ignored). MalwareBazaar zips are encrypted with the password "infected";
 // they are unpacked with bsdtar straight into that folder and keep a non-executable .apk/.exe/.pdf name.
@@ -26,9 +27,10 @@ async function query(form: Record<string, string>) {
 }
 
 async function fetchSamples() {
-  const tag = arg("tag", "SMSspy")!, limit = Number(arg("limit", "30")), type = arg("type", "apk")!;
+  // --signature uses the family name (get_siginfo); huge tags like AgentTesla time out as tag queries.
+  const signature = arg("signature"), tag = signature ?? arg("tag", "SMSspy")!, limit = Number(arg("limit", "30")), type = arg("type", "apk")!;
   const dir = join(".corpus", tag.replace(/[^\w.-]/g, "_")); mkdirSync(dir, {recursive: true});
-  const info = await (await query({query: "get_taginfo", tag, limit: String(Math.min(1000, limit * 3))})).json();
+  const info = await (await query(signature ? {query: "get_siginfo", signature, limit: String(Math.min(1000, limit * 4))} : {query: "get_taginfo", tag, limit: String(Math.min(1000, limit * 3))})).json();
   if (info.query_status !== "ok") throw new Error(`MalwareBazaar: ${info.query_status}`);
   const picks = (info.data as {sha256_hash: string; file_type: string; signature: string | null}[]).filter(s => s.file_type === type).slice(0, limit);
   for (const sample of picks) {
@@ -74,5 +76,6 @@ async function evaluate() {
   const out = arg("json"); if (out) writeFileSync(out, JSON.stringify(rows, null, 2));
 }
 
+// CommonJS entry (no top-level await): pdf.js only resolves its dynamic import correctly outside tsx's ESM mode.
 const command = process.argv[2];
-await (command === "fetch" ? fetchSamples() : command === "run" ? evaluate() : Promise.reject(new Error("Commands: fetch | run")));
+(command === "fetch" ? fetchSamples() : command === "run" ? evaluate() : Promise.reject(new Error("Commands: fetch | run"))).catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

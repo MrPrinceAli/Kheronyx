@@ -1,43 +1,17 @@
 import { z } from "zod";
 import { rateLimit } from "./db";
 import type { Artifact, ThreatIntelResult } from "./types";
+import { BENIGN, SHARED, hostOf, privateIp, publicHost, registrableDomain, under } from "./hosts";
 
 // External reputation for a finished extraction: abuse.ch (MalwareBazaar hash, URLhaus/ThreatFox hosts) and RDAP domain age.
 // Only the SHA-256, hostnames and a few clean payload URLs leave the server (never file bytes, query strings or redacted
 // secrets). Bounded: 15 s total, 6 s per request, small concurrency, shared per-minute quotas; never throws.
 const MB_API = "https://mb-api.abuse.ch/api/v1/", URLHAUS = "https://urlhaus-api.abuse.ch/v1/", THREATFOX = "https://threatfox-api.abuse.ch/api/v1/", RDAP = "https://rdap.org/domain/";
 const MAX_HOSTS = 12, MAX_URLS = 3, MAX_DOMAINS = 8, BUDGET_MS = 15000, TIMEOUT_MS = 6000, MAX_BYTES = 1024 * 1024, MAX_JSON = 6000;
-// Vendor/platform infrastructure nearly every app references: looked up nowhere (noise, wasted quota).
-const BENIGN = ["google.com", "googleapis.com", "gstatic.com", "googleusercontent.com", "google-analytics.com", "doubleclick.net", "googlesyndication.com", "googleadservices.com", "app-measurement.com", "crashlytics.com", "youtube.com", "android.com", "w3.org", "apache.org", "xmlpull.org", "xml.org", "json-schema.org", "purl.org", "adobe.com", "microsoft.com", "windows.com", "windowsupdate.com", "live.com", "office.com", "apple.com", "icloud.com", "facebook.com", "fbcdn.net", "instagram.com", "whatsapp.com", "whatsapp.net", "amazon.com", "cloudflare.com", "mozilla.org", "digicert.com", "verisign.com", "globalsign.com", "sectigo.com", "letsencrypt.org", "unity3d.com", "schema.org", "wikipedia.org", "yahoo.com", "twitter.com", "x.com", "linkedin.com", "paypal.com", "line.me", "tiktok.com", "goo.gle", "ipify.org", "jsdelivr.net", "example.com", "example.org", "example.net"];
-// Shared services where the host says nothing about the sample: specific payload URLs are checked, the host/domain is not.
-const SHARED = ["github.com", "githubusercontent.com", "telegram.org", "t.me", "discord.com", "discordapp.com", "discord.gg", "slack.com", "dropbox.com", "dropboxusercontent.com", "drive.google.com", "pastebin.com", "bit.ly", "goo.gl", "tinyurl.com", "t.co"];
-// Tenant platforms: the registrable part belongs to the platform, so RDAP age is meaningless (hosts are still checked).
-const PLATFORM = ["github.io", "firebaseio.com", "firebaseapp.com", "web.app", "appspot.com", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "ngrok.io", "ngrok.app", "ngrok-free.app", "trycloudflare.com", "000webhostapp.com", "blogspot.com", "glitch.me", "repl.co", "onrender.com", "azurewebsites.net", "cloudfront.net", "amazonaws.com", "duckdns.org", "no-ip.org", "ddns.net", "atwebpages.com", "weebly.com", "wixsite.com"];
-const MULTI = new Set(["co.id", "go.id", "ac.id", "or.id", "my.id", "web.id", "sch.id", "biz.id", "net.id", "mil.id", "ponpes.id", "desa.id", "co.uk", "org.uk", "ac.uk", "gov.uk", "com.br", "com.au", "net.au", "org.au", "co.jp", "co.in", "com.my", "com.sg", "com.cn", "com.hk", "com.tw", "co.kr", "com.vn", "com.ph", "co.th", "com.tr", "com.mx", "com.ar", "co.za", "co.nz", "com.pk", "com.ng", "com.sa", "com.eg"]);
-const NON_PUBLIC = /\.(?:local|localhost|lan|internal|intranet|home|corp|test|example|invalid|onion|arpa|json|xml|txt|html?|php|jsp?|png|jpe?g|gif|apk|dex|so|java|kt|class|properties|log|dat|bin|db|smali|jar)$/;
 const PAYLOAD = /\.(?:apk|xapk|exe|dll|scr|msi|zip|rar|7z|jar|dex|bin|ps1|vbs|hta|sh|php)$/i;
-const DOMAIN = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+// Host helpers live in lib/hosts.ts (pure, shared with extraction and the report UI); re-exported for existing callers.
+export { privateIp, hostOf, publicHost, registrableDomain };
 
-const under = (host: string, list: string[]) => list.some(d => host === d || host.endsWith(`.${d}`));
-const ipv4 = (host: string) => /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/.test(host);
-export function privateIp(ip: string) {
-  const [a, b, c] = ip.split(".").map(Number);
-  return a === 0 || a === 10 || a === 127 || a >= 224 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127 || a === 192 && b === 0 || a === 198 && (b === 18 || b === 19) || a === 198 && b === 51 && c === 100 || a === 203 && b === 0 && c === 113;
-}
-export function hostOf(value: string) {
-  try { return new URL(/^[a-z][\w+.-]*:\/\//i.test(value) ? value : `http://${value}`).hostname.toLowerCase().replace(/\.$/, ""); } catch { return ""; }
-}
-// Public, non-benign hostname or IPv4 worth a reputation lookup (IPv6 and private/reserved ranges are skipped).
-export function publicHost(host: string) {
-  if (ipv4(host)) return !privateIp(host);
-  return DOMAIN.test(host) && !NON_PUBLIC.test(host) && !under(host, BENIGN);
-}
-// Approximate eTLD+1 (small multi-part suffix list); null for IPs, platform tenants and bare suffixes.
-export function registrableDomain(host: string) {
-  if (ipv4(host) || !DOMAIN.test(host) || under(host, PLATFORM)) return null;
-  const labels = host.split("."), n = labels.length >= 3 && MULTI.has(labels.slice(-2).join(".")) ? 3 : 2, domain = labels.slice(-n).join(".");
-  return labels.length < n || MULTI.has(domain) ? null : domain;
-}
 // Hosts (exfil/panel endpoints first) and clean payload URLs extracted by lib/extract.ts.
 export function threatIntelTargets(artifact: Artifact) {
   const campaign = artifact.metadata?.campaign as {hosts?: unknown} | undefined;

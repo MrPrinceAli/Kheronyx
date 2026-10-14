@@ -6,7 +6,7 @@ import { androidManifest, resourceStrings } from "./axml";
 import { KIND_LIMITS, MB, formatMB } from "./limits";
 import { libraryClass, parseDex } from "./dex";
 import { Signals, behaviorIndicator, behaviorMetadata, evaluate, hasLauncher, manifestModel, member, redactSecrets, revealable, trackedRef, trackedString, type Behavior } from "./behaviors";
-import { hiddenStrings } from "./deobfuscate";
+import { decodeHidden, hiddenStrings } from "./deobfuscate";
 import { packerClasses, packerFiles, packerScan } from "./apk-packers";
 import { nativeScan } from "./apk-native";
 import { apkSigning, signingIndicators } from "./apk-signing";
@@ -16,6 +16,7 @@ import { certInfo, certSummary, pkcs7 } from "./certs";
 import { impersonation, readResources, resourceBehaviors, type PeResources, type SignerInfo } from "./pe-resources";
 import { familyMarkers, parseDotnet, type Dotnet } from "./dotnet";
 import { identify, overlay } from "./pe-packers";
+import { EndpointCollector, endpointHosts, hostHint, netLinker, type Endpoint } from "./endpoints";
 export function fileKind(filename: string): FileKind {
   const ext = filename.split(".").pop()?.toLowerCase();
   if (ext === "jpeg") return "jpg";
@@ -35,10 +36,15 @@ export function printableStrings(buffer: Buffer, max = 250) {
 function wideStrings(buffer: Buffer, max = 400) {
   return [...new Set((buffer.subarray(0, 4 * MB).toString("latin1").match(/(?:[\x20-\x7e]\x00){7,220}/g) || []).map(s => s.replace(/\x00/g, "")))].slice(0, max);
 }
+// Endpoint candidates from the first 8 MB (printableStrings keeps only 250 strings for the AI sample).
+function asciiRuns(buffer: Buffer) {
+  const out: string[] = []; for (const m of buffer.subarray(0, 8 * MB).toString("latin1").matchAll(/[\x20-\x7e]{7,300}/g)) {if (out.length >= 20000) break; const s = m[0]; if (s.includes(".") || s.includes(":AA") || /^[A-Za-z0-9+/]{16,}={0,2}$/.test(s)) out.push(s);}
+  return out;
+}
 // Exfiltration/lure signals that apply to any file type (Telegram bots, webhooks, raw-IP panels...).
-function stringSignals(a: Artifact, strings: string[], extra: Behavior[] = [], lure = true) {
+function stringSignals(a: Artifact, strings: string[], extra: Behavior[] = [], lure = true, endpoints: Endpoint[] = []) {
   const sig = new Signals(); sig.strings(strings);
-  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || lure && b.id === "lure_keywords");
+  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra, {endpoints}).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || b.id === "c2_socket" || lure && b.id === "lure_keywords");
   if (list.length) {a.metadata.behaviors = behaviorMetadata(list); a.indicators.unshift(...list.map(behaviorIndicator));}
   a.urls.push(...sig.rankedUrls().slice(0, 40));
 }
@@ -140,7 +146,16 @@ function peParse(buffer: Buffer, a: Artifact) {
     dotnet:net?net.meta:dotnet,certificateTablePresent:security.size>0,...authenticode?{authenticode}:{},overlayBytes:Math.max(0,buffer.length-fileEnd),...ov?{overlay:ov}:{},
     ...id.packer.length?{packer:id.packer}:{},...id.compiler.length?{compiler:id.compiler}:{},...id.installer?{installer:id.installer}:{},
     ...resources?{resources:{count:resources.count,types:Object.fromEntries(Object.entries(resources.types).sort((x,y)=>y[1]-x[1]).slice(0,12)),...resources.version?{version:resources.version}:{},...resources.manifest?{manifest:resources.manifest}:{},icons:resources.icons,...resources.payloads.length?{payloads:resources.payloads.slice(0,10).map(({group:_,...x})=>x)}:{}}}:{}};
-  stringSignals(a,strings,peBehaviors);
+  let endpoints:Endpoint[]=[];
+  try {
+    // Bare IPs count only as a whole string in a program that imports socket/HTTP APIs (or .NET networking types).
+    const netApi=names.some(f=>/^(?:connect|WSAConnect|gethostbyname|getaddrinfo|inet_addr|InternetConnect[AW]?|InternetOpenUrl[AW]?|WinHttpConnect|URLDownloadToFile[AW]?)$/.test(f)) || Boolean(net?.meta.notableMemberRefs.some(r=>/Net\.Sockets\.|Net\.WebClient::|Net\.Http\./.test(r)));
+    const eps=new EndpointCollector(), whole=(s:string)=>netApi && /^\s*(?:\d{1,3}\.){3}\d{1,3}\s*$/.test(s);
+    eps.add([...a.strings,...asciiRuns(buffer),...wide],"exe",{context:whole,decode:true}); if(net)eps.add(net.strings,"dotnet",{context:whole,decode:true});
+    endpoints=eps.finish({smtp:names.some(f=>/smtp/i.test(f)) || Boolean(net?.meta.notableMemberRefs.some(r=>/Net\.Mail\./.test(r)))});
+    if(endpoints.length){a.metadata.endpoints=endpoints;const hosts=endpointHosts(endpoints);if(hosts.length)a.metadata.campaign={hosts};}
+  } catch {a.limitations.push("Alamat server (endpoint) di dalam program tidak berhasil diekstrak sepenuhnya.");}
+  stringSignals(a,strings,peBehaviors,true,endpoints);
   if(net)a.strings.unshift(...net.meta.userStringsSample);
   a.strings.push(...wide.slice(0,150));
   if(packers.length)a.limitations.push(`File dikemas/diproteksi (${packers.join(", ")}); kode asli terkompresi atau terenkripsi sehingga import, string, dan perilaku sebenarnya tidak dapat diperiksa sepenuhnya.`);
@@ -194,11 +209,20 @@ function apkParse(buffer: Buffer, a: Artifact) {
   const components=new Set(m.components.slice(0,3000).map(c=>descriptor(c.name)));
   const library=(c:string)=>libraryClass(c) && !components.has(c) && !own.some(p=>c.startsWith(p)); sig.library=library;
   const wanted=new Set([...components].filter(c=>!library(c))), found=new Set<string>(), packer=packerScan(), bytecode={methods:0,instructions:0,incomplete:0,ms:0};
+  // Endpoint candidates; bare IP/DDNS const-strings are also tracked in bytecode (only to link them to socket code).
+  // Base64/hex-hidden endpoints are tracked too, so a hidden IP loaded only by SDK code is not reported as the app's C2.
+  const hiddenHost=(s:string)=>s.length>=16 && s.length<=300 && /^[A-Za-z0-9+/=_-]+$/.test(s) && hostHint(decodeHidden(s)?.value||"");
+  const eps=new EndpointCollector(), hostSites=new Set<string>(), libHidden=new Set<string>(), hiddenCallers=new Map<string,string>();
+  const stringRule=(s:string)=>trackedString(s) || (hostHint(s) || hiddenHost(s)) && Boolean(hostSites.add(s.slice(0,300)));
+  const collect=(run:()=>void)=>{try{run();}catch(error){console.error("Kheronyx endpoint extraction failed:",error instanceof Error?error.message:error);}};
+  if(tags)collect(()=>eps.add(tags!.filter(t=>t.tag==="meta-data" && t.attributes.value).map(t=>t.attributes.value),"manifest",{decode:true}));
   let dexBytes=0, failed=0;
   const scan=(name:string,data:Buffer)=>{
-    const t=Date.now(), d=parseDex(data,budget.deadline,t<codeDeadline?{code:{deadline:codeDeadline,ref:trackedRef,string:trackedString,library}}:undefined);
+    const t=Date.now(), d=parseDex(data,budget.deadline,t<codeDeadline?{code:{deadline:codeDeadline,ref:trackedRef,string:stringRule,library}}:undefined);
     bytecode.ms+=Date.now()-t; sig.refs(d.methods,d.code);sig.refs(d.fields,d.code);sig.classes(d.classes);sig.strings(d.strings);
-    if(d.code){sig.sites(d.code);bytecode.methods+=d.code.methods;bytecode.instructions+=d.code.units;if(!d.code.complete)bytecode.incomplete++;}else bytecode.incomplete++;
+    collect(()=>{const at=new Map((d.code?.strings||[]).map(x=>[x.ref,x])), site=(s:string)=>at.get(s.slice(0,300));eps.add(d.strings,/^classes\d*\.dex$/.test(name)?"dex":"payload",{callers:s=>site(s)?.app,library:s=>Boolean(d.code?.complete && site(s)?.lib.length && !site(s)!.app.length)});
+      for(const x of d.code?.strings||[])if(hostSites.has(x.ref) && hiddenHost(x.ref)){const v=decodeHidden(x.ref)!.value;if(x.app.length)hiddenCallers.set(v,x.app[0]);else if(d.code!.complete && x.lib.length)libHidden.add(v);}});
+    if(d.code){sig.sites({...d.code,strings:d.code.strings.filter(x=>!hostSites.has(x.ref))});bytecode.methods+=d.code.methods;bytecode.instructions+=d.code.units;if(!d.code.complete)bytecode.incomplete++;}else bytecode.incomplete++;
     for(const h of hiddenStrings(d.strings,revealable,60))sig.reveal(h);
     for(const c of d.classes)if(wanted.has(c.name))found.add(c.name);
     packerClasses(packer,d.classes); dexBytes+=data.length;
@@ -244,8 +268,8 @@ function apkParse(buffer: Buffer, a: Artifact) {
     a.limitations.push(`Aplikasi dibungkus packer/pelindung (${names}): kode asli terenkripsi dan baru dibuka saat runtime sehingga perilaku sebenarnya bisa tidak terlihat; keyakinan analisis statis lebih rendah.`);
   }
   const arsc=entries.find(e=>e.name==="resources.arsc");
-  if(arsc && Date.now()<budget.deadline)try {sig.strings(resourceStrings(unzipEntry(buffer,arsc,48*MB)),"res: ");}catch{a.limitations.push("String resource (resources.arsc) tidak berhasil dibaca.");}
-  const native=nativeScan(buffer,entries,sig,Date.now()+NATIVE_MS);
+  if(arsc && Date.now()<budget.deadline)try {const res=resourceStrings(unzipEntry(buffer,arsc,48*MB));sig.strings(res,"res: ");collect(()=>eps.add(res,"resources",{decode:true,via:"resources.arsc"}));}catch{a.limitations.push("String resource (resources.arsc) tidak berhasil dibaca.");}
+  const native=nativeScan(buffer,entries,sig,Date.now()+NATIVE_MS,(lib,strings)=>collect(()=>eps.add(strings,`native:${lib}`,{context:true})));
   a.metadata.nativeLibraries=native.libs; if(native.count){a.metadata.nativeLibraryCount=native.count;a.metadata.nativeAbis=native.abis;}
   extra.push(...native.behaviors);
   if(native.skipped)a.limitations.push(`${native.skipped} library native tidak dipindai (batas ukuran/waktu atau struktur rusak).`);
@@ -257,12 +281,16 @@ function apkParse(buffer: Buffer, a: Artifact) {
     if(signing.errors.length)a.limitations.push("Sebagian data sertifikat penanda tangan APK tidak dapat dibaca.");
     if(signing.verification?.some(v=>/batas waktu/.test(v)))a.limitations.push("Digest isi APK tidak selesai diverifikasi karena batas waktu.");
   } catch {a.limitations.push("Sertifikat penanda tangan APK tidak berhasil dibaca.");}
-  const behaviors=evaluate(sig,m,extra,{certSha256});
+  let endpoints:Endpoint[]=[];
+  collect(()=>{eps.hidden(sig.hidden.filter(h=>!libHidden.has(h.value) || hiddenCallers.has(h.value)).map(h=>({...h,where:h.where || hiddenCallers.get(h.value)})));endpoints=eps.finish({linked:netLinker(sig.codeClasses.get("net")),smtp:sig.apis.has("smtp")});});
+  const behaviors=evaluate(sig,m,extra,{certSha256,endpoints});
   a.metadata.behaviors=behaviorMetadata(behaviors); a.indicators.unshift(...behaviors.map(behaviorIndicator));
   const sites=sig.callSites(); if(sites.length)a.metadata.callSites=sites;
   if(sig.hidden.length)a.metadata.deobfuscated=sig.hidden.slice(0,15).map(h=>({value:redactSecrets(h.value).slice(0,160),technique:h.technique,...h.where?{where:member(h.where)}:{},...h.lib?{library:true}:{}}));
   const urls=sig.rankedUrls(), hosts=[...new Set(urls.slice(0,200).filter(u=>/telegram|discord|slack|ngrok|trycloudflare|webhook|pipedream|000webhost|:\/\/(?:\d{1,3}\.){3}\d{1,3}|\.php\b|firebaseio|firebasedatabase/i.test(u)).map(u=>u.split("/")[2]))].slice(0,8);
-  const campaign={certSha256:certSha256?[certSha256]:[],telegramBots:[...sig.bots],chatIds:[...sig.chats],hosts};
+  if(endpoints.length)a.metadata.endpoints=endpoints;
+  // Endpoint hosts (bare IPs, DDNS/tunnel hosts, panels) first so lib/threat-intel.ts looks them up.
+  const campaign={certSha256:certSha256?[certSha256]:[],telegramBots:[...sig.bots],chatIds:[...sig.chats],hosts:[...new Set([...endpointHosts(endpoints),...hosts])].slice(0,12)};
   if(Object.values(campaign).some(v=>v.length))a.metadata.campaign=campaign;
   a.metadata.dexFiles=[...stats,...skipped.map(name=>({name,skipped:true}))].slice(0,40);
   a.metadata.dexScan={parsed:stats.length,skipped:skipped.length,inflatedMB:Math.round((DEX_TOTAL-budget.bytes)/MB),ms:Date.now()-started,code:{...bytecode,complete:!bytecode.incomplete && !sig.codeGaps}};
