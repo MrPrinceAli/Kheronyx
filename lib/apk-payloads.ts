@@ -4,9 +4,13 @@ import { readZip, unzipEntry, zipHead, type ZipEntry } from "./zip";
 // DEX found this way is handed to `onDex` so the behavior catalog also covers dropped payloads.
 export type Payload = {name: string; kind: string; size: number; entropy?: number; dex?: number};
 export type Budget = {deadline: number; bytes: number};
+// Shannon entropy (bits/byte). Buffers over 8 MB are estimated from 64 evenly spaced 64 KB windows (4 MB), which is
+// accurate to ~0.01 for the packed/encrypted-vs-plain decision and keeps a 250 MB section well under 100 ms.
 export function entropy(buffer: Buffer) {
-  const counts = new Uint32Array(256); for (const b of buffer) counts[b]++;
-  let n = 0; for (const c of counts) if (c) {const p = c / buffer.length; n -= p * Math.log2(p);} return Math.round(n * 100) / 100;
+  const counts = new Uint32Array(256), add = (from: number, to: number) => {for (let i = from; i < to; i++) counts[buffer[i]]++;};
+  let total = buffer.length;
+  if (total > 8 * 1024 * 1024) {const w = 65536, step = Math.floor((total - w) / 63); for (let k = 0; k < 64; k++) add(k * step, k * step + w); total = 64 * w;} else add(0, total);
+  let n = 0; for (const c of counts) if (c) {const p = c / total; n -= p * Math.log2(p);} return Math.round(n * 100) / 100;
 }
 const SUSPECT = /\.(?:dex|jar|apk|odex|zip|bin|dat|data|enc|so|tmp|bak|db)$/i, DISGUISE = /\.(?:png|jpe?g|gif|webp|json|xml|txt|html?|js|css)$/i;
 const MEDIA = /\.(?:mp3|ogg|wav|m4a|aac|mp4|webm|mkv|3gp|ttf|otf|woff2?|pak|obb|unity3d|bundle|assets|ress|resource|resS|bank|fsb|bnk|ktx|pvr|astc|pkm|etc2?|lz4|br|gz|xz|7z|mov|flac|opus|tflite|pb|onnx|bin\.gz)$/i;

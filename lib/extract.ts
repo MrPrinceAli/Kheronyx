@@ -4,12 +4,18 @@ import type { Artifact, FileKind } from "./types";
 import { readZip, unzipEntry } from "./zip";
 import { androidManifest, resourceStrings } from "./axml";
 import { KIND_LIMITS, MB, formatMB } from "./limits";
-import { parseDex } from "./dex";
-import { Signals, behaviorIndicator, behaviorMetadata, evaluate, hasLauncher, manifestModel, redactSecrets, type Behavior } from "./behaviors";
+import { libraryClass, parseDex } from "./dex";
+import { Signals, behaviorIndicator, behaviorMetadata, evaluate, hasLauncher, manifestModel, member, redactSecrets, revealable, trackedRef, trackedString, type Behavior } from "./behaviors";
+import { hiddenStrings } from "./deobfuscate";
+import { packerClasses, packerFiles, packerScan } from "./apk-packers";
+import { nativeScan } from "./apk-native";
 import { apkSigning, signingIndicators } from "./apk-signing";
 import { entropy, findPayloads } from "./apk-payloads";
 import { importBehaviors, readImports } from "./pe-imports";
 import { certInfo, certSummary, pkcs7 } from "./certs";
+import { impersonation, readResources, resourceBehaviors, type PeResources, type SignerInfo } from "./pe-resources";
+import { familyMarkers, parseDotnet, type Dotnet } from "./dotnet";
+import { identify, overlay } from "./pe-packers";
 export function fileKind(filename: string): FileKind {
   const ext = filename.split(".").pop()?.toLowerCase();
   if (ext === "jpeg") return "jpg";
@@ -32,7 +38,7 @@ function wideStrings(buffer: Buffer, max = 400) {
 // Exfiltration/lure signals that apply to any file type (Telegram bots, webhooks, raw-IP panels...).
 function stringSignals(a: Artifact, strings: string[], extra: Behavior[] = [], lure = true) {
   const sig = new Signals(); sig.strings(strings);
-  const list = evaluate(sig, manifestModel(null), extra).filter(b => extra.includes(b) || b.id.startsWith("exfil_") || lure && b.id === "lure_keywords");
+  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || lure && b.id === "lure_keywords");
   if (list.length) {a.metadata.behaviors = behaviorMetadata(list); a.indicators.unshift(...list.map(behaviorIndicator));}
   a.urls.push(...sig.rankedUrls().slice(0, 40));
 }
@@ -71,7 +77,17 @@ function jpg(buffer: Buffer, a: Artifact) {
   if (eoi + 2 < buffer.length) a.indicators.push({name:"Data setelah akhir gambar",evidence:`${buffer.length-eoi-2} byte setelah marker EOI.`});
   a.limitations.push("Pixel tidak dirender; steganografi dan eksploit decoder gambar tidak dapat dipastikan.");
 }
+const PE_BUDGET_MS=8000;
+// Telegram bot secrets ("AA" + ~33 chars) are masked even when the numeric bot id before them is missing or mangled,
+// which the generic redaction cannot recognise. Runs even if parsing throws halfway.
+const scrubBotSecret=(s:string)=>s.replace(/:AA[\w-]{30,40}(?![\w-])/g,m=>`:…${m.slice(-4)}`);
 function pe(buffer: Buffer, a: Artifact) {
+  try {peParse(buffer,a);} finally {
+    a.strings=a.strings.map(scrubBotSecret); a.urls=a.urls.map(scrubBotSecret); a.indicators=a.indicators.map(i=>({name:scrubBotSecret(i.name),evidence:scrubBotSecret(i.evidence)}));
+    a.metadata=JSON.parse(scrubBotSecret(JSON.stringify(a.metadata)));
+  }
+}
+function peParse(buffer: Buffer, a: Artifact) {
   if (buffer.length < 64) throw new Error("Header EXE terpotong.");
   const p = buffer.readUInt32LE(60); if (p + 24 > buffer.length || buffer.readUInt32LE(p) !== 0x4550) throw new Error("EXE bukan Portable Executable yang valid.");
   const count = buffer.readUInt16LE(p+6), optionalSize = buffer.readUInt16LE(p+20), opt = p+24;
@@ -93,9 +109,14 @@ function pe(buffer: Buffer, a: Artifact) {
   const wide=wideStrings(buffer), strings=[...a.strings,...wide], peBehaviors:Behavior[]=importBehaviors(imports);
   const shadow=strings.filter(x=>/vssadmin(?:\.exe)?\s+delete\s+shadows|shadowcopy\s+delete|bcdedit.{0,40}recoveryenabled\s+no|wbadmin\s+delete/i.test(x)).slice(0,3);
   if(shadow.length)peBehaviors.push({id:"shadow_delete",name:"Menghapus cadangan/shadow copy (pola ransomware)",severity:"high",evidence:shadow.map(x=>x.slice(0,160))});
-  const dotnet=imports.length===1 && imports[0].dll==="mscoree.dll", packerSections=sections.map(s=>s.name).filter(n=>/^(?:UPX\d|\.aspack|\.adata|\.MPRESS\d|\.themida|\.vmp\d|\.petite|\.nsp\d|\.enigma\d|\.packed)$/i.test(n));
+  // Resources, .NET metadata, packer/installer identification and overlay share one time budget (bounded, never executed).
+  const deadline=Date.now()+PE_BUDGET_MS, cli=dir(14), rsrc=dir(2); let resources:PeResources|undefined, net:Dotnet|undefined;
+  if(rsrc.rva && rsrc.size)try{resources=readResources(buffer,toOffset,rsrc.rva,deadline);if(resources.errors || resources.truncated)a.limitations.push("Sebagian resource EXE rusak atau melebihi batas analisis sehingga tidak dibaca.");}catch{a.limitations.push("Resource EXE (version info, manifest, data tertanam) tidak berhasil dibaca.");}
+  if(cli.rva && cli.size)try{net=parseDotnet(buffer,toOffset,cli.rva,deadline);peBehaviors.push(...net.behaviors);strings.push(...net.strings);if(net.meta.truncated)a.limitations.push("Metadata .NET sangat besar; hanya sebagian tabel dan string yang dibaca.");}
+    catch(error){console.error("Kheronyx .NET metadata failed:",error instanceof Error?error.message:error);a.incomplete=true;a.limitations.push("Metadata .NET tidak berhasil dibaca; tipe, metode, dan string kode .NET tidak dapat diperiksa.");}
+  const dotnet=Boolean(cli.rva && cli.size) || imports.length===1 && imports[0].dll==="mscoree.dll", id=identify(buffer,sections,fileEnd,p,dotnet,net?.obfuscators), packers=id.packer.filter(x=>!/obfuscator \.NET/.test(x));
   const dense=sections.filter(s=>s.size>1000 && s.entropy>7.2).map(s=>`${s.name} (${s.entropy})`);
-  if(packerSections.length || !dotnet && total<15 && dense.length)peBehaviors.push({id:"packed",name:"Kemungkinan dikemas (packed)",severity:"medium",evidence:[packerSections.length?`section packer: ${packerSections.join(", ")}`:"",`${total} fungsi import${names.some(f=>/^(?:LoadLibrary|GetProcAddress)/.test(f))?" (resolusi API dinamis lewat LoadLibrary/GetProcAddress)":""}`,dense.length?`section entropi tinggi: ${dense.slice(0,4).join(", ")}`:""].filter(Boolean)});
+  if(packers.length || !dotnet && !id.installer && !id.script && total<15 && dense.length)peBehaviors.push({id:"packed",name:packers.length?`Dikemas/diproteksi packer (${packers.slice(0,3).join(", ")})`:"Kemungkinan dikemas (packed)",severity:"medium",evidence:[packers.length?`teridentifikasi dari section/penanda: ${packers.join(", ")}`:"",`${total} fungsi import${names.some(f=>/^(?:LoadLibrary|GetProcAddress)/.test(f))?" (resolusi API dinamis lewat LoadLibrary/GetProcAddress)":""}`,dense.length?`section entropi tinggi: ${dense.slice(0,4).join(", ")}`:""].filter(Boolean)});
   // Authenticode: WIN_CERTIFICATE at a file offset (not an RVA). Certificates are read, signatures are not verified.
   const security=dir(4); let authenticode:Record<string,unknown>|undefined;
   if(security.size && security.rva+8<=buffer.length && security.rva+security.size<=buffer.length) {
@@ -106,23 +127,44 @@ function pe(buffer: Buffer, a: Artifact) {
       if(signer){const {serial:_,selfSigned,...rest}=signer;authenticode={signer:rest,selfSigned,chain:infos.map(c=>c.subject).slice(0,4)};if(selfSigned)peBehaviors.push({id:"self_signed",name:"Authenticode swa-tanda-tangan",severity:"medium",evidence:[`Penanda tangan tidak diterbitkan CA: ${certSummary(signer)}`]});}
     } catch {a.limitations.push("Sertifikat Authenticode ada tetapi tidak berhasil dibaca.");}
   }
+  if(resources)peBehaviors.push(...resourceBehaviors(resources,Boolean(id.installer)),...impersonation(resources.version,authenticode as SignerInfo|undefined));
+  const ov=overlay(buffer,fileEnd,{offset:security.rva,size:security.size}), extra=ov?ov.size-(ov.certificateBytes||0):0;
+  if(ov && /\(PE\)/.test(ov.type) && !id.installer)peBehaviors.push({id:"overlay_pe",name:"Program lain disisipkan di overlay",severity:"medium",evidence:[`${ov.type} di offset ${ov.offset}, ${extra} byte setelah section terakhir`]});
+  if(ov && /padding/.test(ov.type) && extra>=10*MB)peBehaviors.push({id:"inflated",name:"Ukuran file digelembungkan (padding overlay)",severity:"medium",evidence:[`${formatMB(extra)} data berulang/kosong setelah program; teknik umum untuk melewati batas ukuran pemindaian antivirus`]});
+  if(ov && /entropi tinggi/.test(ov.type) && extra>=65536 && !id.installer && !id.script)peBehaviors.push({id:"overlay_dense",name:"Data berentropi tinggi di overlay",severity:"low",evidence:[`${extra} byte, entropi ${ov.entropy}; bisa berupa payload terenkripsi atau data aplikasi terkompresi`]});
+  if(ov?.afterCertificate && ov.afterCertificate>64)peBehaviors.push({id:"after_certificate",name:"Data disisipkan setelah sertifikat Authenticode",severity:"medium",evidence:[`${ov.afterCertificate} byte setelah tabel sertifikat; bagian ini tidak tercakup tanda tangan dan bisa membawa konfigurasi/payload`]});
+  peBehaviors.push(...familyMarkers([...strings,...net?.names||[]]));
   const priority=(f:string)=>peBehaviors.some(b=>b.evidence.some(e=>e.endsWith(`!${f}`)))?0:1; let room=500;
   a.metadata={architecture:buffer.readUInt16LE(p+4).toString(16),peFormat:magic===0x20b?"PE32+":"PE32",sections,importedLibraries:imports.map(i=>i.dll),importCount:total,
     imports:imports.slice(0,60).map(i=>{const functions=[...i.functions].sort((x,y)=>priority(x)-priority(y)).slice(0,Math.max(0,Math.min(40,room)));room-=functions.length;return {dll:i.dll,count:i.count,functions,...i.delay?{delay:true}:{}};}),
-    dotnet,certificateTablePresent:security.size>0,...authenticode?{authenticode}:{},overlayBytes:Math.max(0,buffer.length-fileEnd)};
+    dotnet:net?net.meta:dotnet,certificateTablePresent:security.size>0,...authenticode?{authenticode}:{},overlayBytes:Math.max(0,buffer.length-fileEnd),...ov?{overlay:ov}:{},
+    ...id.packer.length?{packer:id.packer}:{},...id.compiler.length?{compiler:id.compiler}:{},...id.installer?{installer:id.installer}:{},
+    ...resources?{resources:{count:resources.count,types:Object.fromEntries(Object.entries(resources.types).sort((x,y)=>y[1]-x[1]).slice(0,12)),...resources.version?{version:resources.version}:{},...resources.manifest?{manifest:resources.manifest}:{},icons:resources.icons,...resources.payloads.length?{payloads:resources.payloads.slice(0,10).map(({group:_,...x})=>x)}:{}}}:{}};
   stringSignals(a,strings,peBehaviors);
+  if(net)a.strings.unshift(...net.meta.userStringsSample);
   a.strings.push(...wide.slice(0,150));
+  if(packers.length)a.limitations.push(`File dikemas/diproteksi (${packers.join(", ")}); kode asli terkompresi atau terenkripsi sehingga import, string, dan perilaku sebenarnya tidak dapat diperiksa sepenuhnya.`);
+  if(net?.obfuscators.length)a.limitations.push(`Kode .NET diobfuskasi (${net.obfuscators.join(", ")}); nama dan string asli bisa tersembunyi.`);
+  if(id.installer)a.limitations.push(`Installer ${id.installer}: payload di dalam installer tidak dibongkar dan tidak diperiksa; program yang dipasang bisa berbeda dari yang terlihat.`);
+  if(id.script)a.limitations.push(`Isi ${id.script} di dalam file tidak dibongkar atau didekompilasi.`);
   a.limitations.push("Program tidak dijalankan. Import function dibaca dari tabel import statis (API yang diresolusi saat runtime tidak terlihat); sertifikat Authenticode hanya dibaca tanpa verifikasi tanda tangan; reputasi penerbit dan isi packed/encrypted belum diverifikasi.");
 }
-// Known commercial packers/protectors (also used by malware to hide the real DEX).
-const PACKER_FILES=/^(?:lib\/[^/]+\/)?(?:libjiagu[^/]*|libsecexe|libsecmain|libDexHelper[^/]*|libexecmain|libshell[a-z0-9_]*|libtup|libprotectClass|libnqshield|libmobisec|libbaiduprotect|libAppGuard|libitsec|libjgdtc)\.so$|^assets\/(?:ijiami\.dat|secData0\.jar|jiagu[^/]*|libjiagu[^/]*)$/i;
-const PACKER_APPS=/^(?:com\.stub\.StubApp|com\.secneo\.apkwrapper\.|com\.tencent\.StubShell\.|com\.shell\.SuperApplication|s\.h\.e\.l\.l\.|com\.wrapper\.proxyapplication\.|com\.baidu\.protect\.|com\.bangcle\.)/;
 // All classes*.dex are parsed one at a time (each ≤64 MB inflated, released before the next) within a shared
-// 20 s / 768 MB budget, so a 250 MB APK stays well inside the function limits.
-const DEX_MAX=64*MB, DEX_BUDGET_MS=20000, DEX_TOTAL=768*MB;
+// 20 s / 768 MB budget, so a 250 MB APK stays well inside the function limits. Bytecode decoding (call sites,
+// string recovery) uses the first 12 s of that budget; later DEX files fall back to tables only. Native libraries
+// and v2/v3 signature verification get their own small budgets.
+const DEX_MAX=64*MB, DEX_BUDGET_MS=20000, CODE_BUDGET_MS=12000, DEX_TOTAL=768*MB, NATIVE_MS=5000, SIGNING_MS=5000;
+const descriptor=(name:string)=>`L${name.replace(/\./g,"/")};`;
+// Same final secret masking as pe(): covers deobfuscated and native-library strings even if parsing throws midway.
 function apk(buffer: Buffer, a: Artifact) {
+  try {apkParse(buffer,a);} finally {
+    a.strings=a.strings.map(scrubBotSecret); a.urls=a.urls.map(scrubBotSecret); a.indicators=a.indicators.map(i=>({name:scrubBotSecret(i.name),evidence:scrubBotSecret(i.evidence)}));
+    a.metadata=JSON.parse(scrubBotSecret(JSON.stringify(a.metadata)));
+  }
+}
+function apkParse(buffer: Buffer, a: Artifact) {
   const entries=readZip(buffer); const manifest=entries.find(e=>e.name==="AndroidManifest.xml"); if(!manifest)throw new Error("APK tidak memiliki AndroidManifest.xml.");
-  a.metadata.entries=entries.length; a.metadata.nativeLibraries=entries.filter(e=>/^lib\/.+\.so$/.test(e.name)).map(e=>e.name).slice(0,60);
+  a.metadata.entries=entries.length;
   a.metadata.signatureFiles=entries.filter(e=>/^META-INF\/.+\.(RSA|DSA|EC|SF)$/i.test(e.name)).map(e=>e.name).slice(0,20);
   const suspicious=entries.filter(e=>e.name.split(/[\\/]/).includes("..") || e.name.startsWith("/") || /^[A-Za-z]:/.test(e.name));
   if(suspicious.length)a.indicators.push({name:"Path arsip mencurigakan",evidence:suspicious.slice(0,10).map(e=>e.name).join(", ")});
@@ -139,8 +181,23 @@ function apk(buffer: Buffer, a: Artifact) {
   } catch {a.incomplete=true; a.limitations.push("Manifest APK tidak berhasil dibaca sepenuhnya.");}
   const m=manifestModel(tags), count=(re:RegExp)=>m.components.filter(c=>re.test(c.tag)).length;
   if(m.parsed)a.metadata.components={activities:count(/^activity/),services:count(/^service$/),receivers:count(/^receiver$/),providers:count(/^provider$/),launcher:hasLauncher(m)};
-  const sig=new Signals(), budget={deadline:Date.now()+DEX_BUDGET_MS,bytes:DEX_TOTAL}, stats:Record<string,unknown>[]=[], skipped:string[]=[], started=Date.now();
-  const scan=(name:string,data:Buffer)=>{const d=parseDex(data,budget.deadline);sig.refs(d.methods);sig.refs(d.fields);sig.classes(d.classes);sig.strings(d.strings);stats.push({name:name.slice(0,120),size:data.length,version:d.version,strings:d.strings.length,methods:d.methods.length,classes:d.classes.length});};
+  const sig=new Signals(), budget={deadline:Date.now()+DEX_BUDGET_MS,bytes:DEX_TOTAL}, stats:Record<string,unknown>[]=[], skipped:string[]=[], started=Date.now(), codeDeadline=started+CODE_BUDGET_MS;
+  // Origin of calling code: known SDK namespaces are "library", except the app's own package/application namespace and
+  // classes declared as manifest components (malware likes com.google.*-style names).
+  const own=[m.package,m.application.includes(".")?m.application.slice(0,m.application.lastIndexOf(".")):""].filter(p=>p.length>2).map(p=>`L${p.replace(/\./g,"/")}/`);
+  const components=new Set(m.components.slice(0,3000).map(c=>descriptor(c.name)));
+  const library=(c:string)=>libraryClass(c) && !components.has(c) && !own.some(p=>c.startsWith(p)); sig.library=library;
+  const wanted=new Set([...components].filter(c=>!library(c))), found=new Set<string>(), packer=packerScan(), bytecode={methods:0,instructions:0,incomplete:0,ms:0};
+  let dexBytes=0, failed=0;
+  const scan=(name:string,data:Buffer)=>{
+    const t=Date.now(), d=parseDex(data,budget.deadline,t<codeDeadline?{code:{deadline:codeDeadline,ref:trackedRef,string:trackedString,library}}:undefined);
+    bytecode.ms+=Date.now()-t; sig.refs(d.methods,d.code);sig.refs(d.fields,d.code);sig.classes(d.classes);sig.strings(d.strings);
+    if(d.code){sig.sites(d.code);bytecode.methods+=d.code.methods;bytecode.instructions+=d.code.units;if(!d.code.complete)bytecode.incomplete++;}else bytecode.incomplete++;
+    for(const h of hiddenStrings(d.strings,revealable,60))sig.reveal(h);
+    for(const c of d.classes)if(wanted.has(c.name))found.add(c.name);
+    packerClasses(packer,d.classes); dexBytes+=data.length;
+    stats.push({name:name.slice(0,120),size:data.length,version:d.version,strings:d.strings.length,methods:d.methods.length,classes:d.classes.length,...d.code?{code:d.code.complete?"lengkap":`sebagian (${d.code.reason||"struktur rusak"})`}:{code:"dilewati (batas waktu)"}});
+  };
   const dex=entries.filter(e=>/^classes\d*\.dex$/.test(e.name)).sort((x,y)=>(parseInt(x.name.slice(7))||1)-(parseInt(y.name.slice(7))||1));
   for(const e of dex) {
     if(Date.now()>budget.deadline || e.size>budget.bytes){skipped.push(e.name);continue;}
@@ -148,10 +205,12 @@ function apk(buffer: Buffer, a: Artifact) {
     try {data=unzipEntry(buffer,e,DEX_MAX);budget.bytes-=data.length;scan(e.name,data);}
     catch(error){
       if(Date.now()>budget.deadline){skipped.push(e.name);continue;}
-      console.error(`Kheronyx DEX ${e.name} failed:`,error instanceof Error?error.message:error);
+      console.error(`Kheronyx DEX ${e.name} failed:`,error instanceof Error?error.message:error); failed++;
       a.incomplete=true;a.limitations.push(`Kode ${e.name} tidak berhasil dibedah dalam batas sumber daya.`);if(data)a.strings.push(...printableStrings(data,120));
     }
   }
+  // Library-only attribution is only trusted when every classes*.dex was read.
+  if(skipped.length || failed)sig.codeGaps=true;
   const extra:Behavior[]=[];
   const payloads=findPayloads(buffer,entries,budget,scan);
   if(payloads.length) {
@@ -159,27 +218,44 @@ function apk(buffer: Buffer, a: Artifact) {
     const code=payloads.filter(x=>/DEX|Arsip kode/.test(x.kind)), blobs=payloads.filter(x=>/Blob/.test(x.kind));
     extra.push({id:"hidden_payload",name:"Payload kode tersembunyi (packing/dropper)",severity:code.length?"high":blobs.length?"medium":"low",evidence:payloads.slice(0,6).map(x=>`${x.name} — ${x.kind}${x.entropy?`, entropi ${x.entropy}`:""}${x.dex?`, ${x.dex} DEX dibedah`:""}`)});
   }
-  const packers=[...entries.filter(e=>PACKER_FILES.test(e.name)).map(e=>e.name),...PACKER_APPS.test(m.application)?[`application ${m.application}`]:[]];
-  if(packers.length)extra.push({id:"packer",name:"Proteksi/packer aplikasi terdeteksi",severity:"medium",evidence:packers.slice(0,6)});
+  // Packers/protectors: known stubs, plus "stub-only" DEX (most manifest components missing from a small DEX) next to an
+  // encrypted blob or a DEX loader.
+  packerFiles(packer,entries,m.application);
+  const missing=[...wanted].filter(c=>!found.has(c)), blob=payloads.find(x=>/Blob/.test(x.kind) && x.size>=65536);
+  const stubOnly=!skipped.length && !failed && stats.length>0 && wanted.size>=4 && missing.length>=wanted.size*0.6 && dexBytes<2*MB;
+  if(packer.names.size || stubOnly && (blob || sig.apis.has("dexLoad"))) {
+    const names=packer.names.size?[...packer.names].slice(0,3).join(", "):"tidak dikenal";
+    extra.push({id:"packer",name:`Aplikasi dibungkus pelindung/packer (${names})`,severity:"medium",evidence:[...packer.evidence.slice(0,3),stubOnly?`DEX hanya stub: ${missing.length}/${wanted.size} kelas komponen manifest tidak ada di DEX (${Math.round(dexBytes/1024)} KB), mis. ${missing.slice(0,2).map(c=>c.slice(1,-1).replace(/\//g,".")).join(", ")}`.slice(0,220):"",blob?`blob terenkripsi ${blob.name} (${formatMB(blob.size)}, entropi ${blob.entropy})`:"","kode asli dienkripsi dan baru dibuka saat runtime, sehingga analisis statis terbatas (heuristik; packer juga dipakai aplikasi resmi seperti bank)"].filter(Boolean)});
+    a.metadata.packer={names:[...packer.names],stubOnly,evidence:packer.evidence.slice(0,6)};
+    a.limitations.push(`Aplikasi dibungkus packer/pelindung (${names}): kode asli terenkripsi dan baru dibuka saat runtime sehingga perilaku sebenarnya bisa tidak terlihat; keyakinan analisis statis lebih rendah.`);
+  }
   const arsc=entries.find(e=>e.name==="resources.arsc");
   if(arsc && Date.now()<budget.deadline)try {sig.strings(resourceStrings(unzipEntry(buffer,arsc,48*MB)),"res: ");}catch{a.limitations.push("String resource (resources.arsc) tidak berhasil dibaca.");}
+  const native=nativeScan(buffer,entries,sig,Date.now()+NATIVE_MS);
+  a.metadata.nativeLibraries=native.libs; if(native.count){a.metadata.nativeLibraryCount=native.count;a.metadata.nativeAbis=native.abis;}
+  extra.push(...native.behaviors);
+  if(native.skipped)a.limitations.push(`${native.skipped} library native tidak dipindai (batas ukuran/waktu atau struktur rusak).`);
   let certSha256:string|undefined;
   try {
-    const signing=apkSigning(buffer,entries);certSha256=signing.certificates[0]?.sha256;
-    a.metadata.signing={schemes:signing.schemes,certificates:signing.certificates.map(({subject,issuer,sha256,validFrom,validTo,key})=>({subject,issuer,sha256,validFrom,validTo,key}))};
+    const signing=apkSigning(buffer,entries,Date.now()+SIGNING_MS);certSha256=signing.certificates[0]?.sha256;
+    a.metadata.signing={schemes:signing.schemes,verified:signing.verified??null,verification:signing.verification,certificates:signing.certificates.map(({subject,issuer,sha256,validFrom,validTo,key})=>({subject,issuer,sha256,validFrom,validTo,key}))};
     a.indicators.push(...signingIndicators(signing));
     if(signing.errors.length)a.limitations.push("Sebagian data sertifikat penanda tangan APK tidak dapat dibaca.");
+    if(signing.verification?.some(v=>/batas waktu/.test(v)))a.limitations.push("Digest isi APK tidak selesai diverifikasi karena batas waktu.");
   } catch {a.limitations.push("Sertifikat penanda tangan APK tidak berhasil dibaca.");}
   const behaviors=evaluate(sig,m,extra,{certSha256});
   a.metadata.behaviors=behaviorMetadata(behaviors); a.indicators.unshift(...behaviors.map(behaviorIndicator));
+  const sites=sig.callSites(); if(sites.length)a.metadata.callSites=sites;
+  if(sig.hidden.length)a.metadata.deobfuscated=sig.hidden.slice(0,15).map(h=>({value:redactSecrets(h.value).slice(0,160),technique:h.technique,...h.where?{where:member(h.where)}:{},...h.lib?{library:true}:{}}));
   const urls=sig.rankedUrls(), hosts=[...new Set(urls.slice(0,200).filter(u=>/telegram|discord|slack|ngrok|trycloudflare|webhook|pipedream|000webhost|:\/\/(?:\d{1,3}\.){3}\d{1,3}|\.php\b|firebaseio|firebasedatabase/i.test(u)).map(u=>u.split("/")[2]))].slice(0,8);
   const campaign={certSha256:certSha256?[certSha256]:[],telegramBots:[...sig.bots],chatIds:[...sig.chats],hosts};
   if(Object.values(campaign).some(v=>v.length))a.metadata.campaign=campaign;
   a.metadata.dexFiles=[...stats,...skipped.map(name=>({name,skipped:true}))].slice(0,40);
-  a.metadata.dexScan={parsed:stats.length,skipped:skipped.length,inflatedMB:Math.round((DEX_TOTAL-budget.bytes)/MB),ms:Date.now()-started};
+  a.metadata.dexScan={parsed:stats.length,skipped:skipped.length,inflatedMB:Math.round((DEX_TOTAL-budget.bytes)/MB),ms:Date.now()-started,code:{...bytecode,complete:!bytecode.incomplete && !sig.codeGaps}};
   a.strings=[...sig.samples(),...a.strings]; a.urls.push(...urls.slice(0,60));
   if(skipped.length)a.limitations.push(`${skipped.length} file DEX tidak dibedah karena batas waktu/ukuran analisis; perilaku di dalamnya bisa terlewat.`);
-  a.limitations.push("APK tidak dijalankan. Bytecode tidak didekompilasi (hanya tabel string, metode, dan kelas DEX yang dibaca), library native tidak dianalisis, dan tanda tangan APK hanya dibaca sertifikatnya tanpa verifikasi kriptografis; izin luas bukan bukti malware.");
+  if(bytecode.incomplete && stats.length)a.limitations.push(`Analisis bytecode (pemanggil API, string tersamar) tidak lengkap untuk ${bytecode.incomplete} DEX karena batas waktu/struktur; asal pemanggilan sebagian API tidak diketahui.`);
+  a.limitations.push("APK tidak dijalankan. Bytecode hanya dibedah statis (pemanggil API sensitif, string tersamar sederhana), tidak didekompilasi penuh; kode yang didekripsi/diunduh saat runtime tidak terlihat. Library native hanya dibaca simbol dan string-nya. Tanda tangan v2/v3 diverifikasi kriptografis (integritas isi, bukan identitas penerbit); v1 hanya dibaca sertifikatnya. Izin luas bukan bukti malware.");
 }
 const PDF_TOKENS:[string,string][]=[["JavaScript|JS","JavaScript tertanam"],["OpenAction","Tindakan saat dibuka"],["AA","Tindakan otomatis (/AA)"],["Launch","Tindakan launch (membuka program/file)"],["EmbeddedFiles?","File tertanam"],["SubmitForm","Formulir mengirim data (/SubmitForm)"],["ImportData","Impor data eksternal (/ImportData)"],["RichMedia","Konten RichMedia/Flash"],["XFA","Formulir XFA"]];
 // Raw token scan over the file plus bounded inflation of compressed object streams (/ObjStm), where droppers often hide actions.
