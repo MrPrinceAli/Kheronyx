@@ -282,9 +282,9 @@ function apkParse(buffer: Buffer, a: Artifact) {
   a.metadata.nativeLibraries=native.libs; if(native.count){a.metadata.nativeLibraryCount=native.count;a.metadata.nativeAbis=native.abis;}
   extra.push(...native.behaviors);
   if(native.skipped)a.limitations.push(`${native.skipped} library native tidak dipindai (batas ukuran/waktu atau struktur rusak).`);
-  let certSha256:string|undefined;
+  let certSha256:string|undefined,certSubject:string|undefined;
   try {
-    const signing=apkSigning(buffer,entries,Date.now()+SIGNING_MS);certSha256=signing.certificates[0]?.sha256;
+    const signing=apkSigning(buffer,entries,Date.now()+SIGNING_MS);certSha256=signing.certificates[0]?.sha256;certSubject=signing.certificates[0]?.subject;
     a.metadata.signing={schemes:signing.schemes,verified:signing.verified??null,verification:signing.verification,certificates:signing.certificates.map(({subject,issuer,sha256,validFrom,validTo,key})=>({subject,issuer,sha256,validFrom,validTo,key}))};
     a.indicators.push(...signingIndicators(signing));
     if(signing.errors.length)a.limitations.push("Sebagian data sertifikat penanda tangan APK tidak dapat dibaca.");
@@ -292,7 +292,7 @@ function apkParse(buffer: Buffer, a: Artifact) {
   } catch {a.limitations.push("Sertifikat penanda tangan APK tidak berhasil dibaca.");}
   let endpoints:Endpoint[]=[];
   collect(()=>{eps.hidden(sig.hidden.filter(h=>!libHidden.has(h.value) || hiddenCallers.has(h.value)).map(h=>({...h,where:h.where || hiddenCallers.get(h.value)})));endpoints=eps.finish({linked:netLinker(sig.codeClasses.get("net")),smtp:sig.apis.has("smtp")});});
-  const behaviors=evaluate(sig,m,extra,{certSha256,endpoints});
+  const behaviors=evaluate(sig,m,extra,{certSha256,certSubject,endpoints});
   a.metadata.behaviors=behaviorMetadata(behaviors); a.indicators.unshift(...behaviors.map(behaviorIndicator));
   const sites=sig.callSites(); if(sites.length)a.metadata.callSites=sites;
   if(sig.hidden.length)a.metadata.deobfuscated=sig.hidden.slice(0,15).map(h=>({value:redactSecrets(h.value).slice(0,160),technique:h.technique,...h.where?{where:member(h.where)}:{},...h.lib?{library:true}:{}}));

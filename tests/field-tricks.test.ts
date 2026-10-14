@@ -58,3 +58,16 @@ test("calibration: default SMS apps are not stealers unless they also hide behin
   const admin = ids(evaluate(new Signals(), manifestModel(tags([{tag: "receiver", attributes: {name: "org.sms.app.Admin", permission: "android.permission.BIND_DEVICE_ADMIN"}}]) as never), [], {}));
   assert.notEqual(admin.sms_read, "low"); assert.ok(admin.sms_stealer);
 });
+
+test("system impersonation: system/vendor namespace, system UID or process names without the vendor's key", async () => {
+  const { evaluate, manifestModel, Signals } = await import("../lib/behaviors");
+  const run = (pkg: string, subject: string, extra: Record<string, string> = {}, comps: {tag: string; attributes: Record<string, string>}[] = []) =>
+    Object.fromEntries(evaluate(new Signals(), manifestModel([{tag: "manifest", attributes: {package: pkg, ...extra}}, {tag: "activity", attributes: {name: `${pkg}.Main`}}, {tag: "action", attributes: {name: "android.intent.action.MAIN"}}, {tag: "category", attributes: {name: "android.intent.category.LAUNCHER"}}, ...comps] as never), [], {certSubject: subject}).map(b => [b.id, b.severity]));
+  assert.equal(run("android.process.media", "CN=dpt").system_impersonation, "high");
+  assert.equal(run("com.google.android.gms.update", "C=US, O=Example Ltd, CN=dev").system_impersonation, "high");
+  assert.equal(run("com.google.android.gms", "C=US, ST=California, L=Mountain View, O=Google Inc., OU=Android, CN=Android").system_impersonation, undefined);
+  assert.equal(run("com.samsung.android.app.notes", "C=KR, O=Samsung Corporation, CN=Samsung Cert").system_impersonation, undefined);
+  assert.equal(run("com.kurir.cekresi", "CN=dev", {sharedUserId: "android.uid.system"}).system_impersonation, "high");
+  assert.equal(run("com.kurir.cekresi", "CN=Android Debug", {}, [{tag: "service", attributes: {name: "com.kurir.cekresi.Svc", process: "com.android.systemui"}}]).system_impersonation, "high");
+  assert.equal(run("org.videolan.vlc", "CN=VideoLAN").system_impersonation, undefined);
+});

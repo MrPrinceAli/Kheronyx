@@ -20,7 +20,7 @@ const IMPACTS: Impact[] = [
   {icon: CreditCard, title: "Halaman login/pembayaran palsu", text: "Membujuk Anda menekan tautan atau tombol yang membuka halaman palsu, lalu meminta password, data kartu, PIN, atau OTP Anda.", ids: ["pdf_phishing", "pdf_link_only", "pdf_submit_form"]},
   {icon: EyeOff, title: "Bersembunyi dan sulit dihapus", text: "Bisa menyembunyikan ikonnya, aktif sendiri saat perangkat dinyalakan, atau meminta hak admin supaya sulit di-uninstall.", ids: ["hidden_icon", "device_admin", "boot_persistence", "persistence", "net_persistence", "requires_admin"]},
   {icon: FileLock2, title: "Mengunci file untuk tebusan", text: "Pola ransomware: file Anda bisa dikunci dan cadangannya dihapus, lalu Anda diminta membayar tebusan.", ids: ["file_encryption", "shadow_delete"]},
-  {icon: VenetianMask, title: "Menyamar sebagai pihak resmi", text: "Mengaku sebagai bank, kurir, undangan, atau instansi resmi supaya Anda percaya lalu memasangnya.", ids: ["brand_impersonation", "lure_keywords", "signature_mismatch"]},
+  {icon: VenetianMask, title: "Menyamar sebagai pihak resmi", text: "Mengaku sebagai bank, kurir, undangan, atau instansi resmi supaya Anda percaya lalu memasangnya.", ids: ["brand_impersonation", "lure_keywords", "signature_mismatch", "system_impersonation"]},
   {icon: Ban, title: "Sengaja menghindari pemeriksaan", text: "Isinya disamarkan atau dikunci agar sulit diperiksa. Ini umum pada aplikasi jahat, meski kadang juga dipakai aplikasi resmi.", ids: ["packer", "packed", "obfuscated_strings", "anti_analysis", "native_anti_analysis", "net_anti_analysis", "net_obfuscator", "net_defense_evasion", "encrypted_payload", "no_imports", "pdf_locked"]},
 ];
 const RANK: Record<string, number> = {low: 0, medium: 1, high: 2, critical: 3};

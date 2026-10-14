@@ -6,7 +6,7 @@ import type { Endpoint } from "./endpoints";
 export type Severity = "low" | "medium" | "high" | "critical";
 export type Behavior = {id: string; name: string; severity: Severity; evidence: string[]};
 export type Component = {tag: string; name: string; permission: string; actions: string[]; categories: string[]};
-export type Manifest = {parsed: boolean; package: string; application: string; permissions: string[]; components: Component[]};
+export type Manifest = {parsed: boolean; package: string; application: string; permissions: string[]; components: Component[]; sharedUserId?: string; processes?: string[]};
 type Tag = {tag: string; attributes: Record<string, string>};
 const RANK: Record<Severity, number> = {low: 0, medium: 1, high: 2, critical: 3};
 const LABEL: Record<Severity, string> = {low: "rendah", medium: "sedang", high: "tinggi", critical: "kritis"};
@@ -198,7 +198,8 @@ export function manifestModel(tags: Tag[] | null): Manifest {
   const m: Manifest = {parsed: Boolean(tags), package: "", application: "", permissions: [], components: []};
   for (const t of tags || []) {
     const a = t.attributes, last = m.components[m.components.length - 1];
-    if (t.tag === "manifest") m.package = a.package || "";
+    if (a.process && (m.processes ??= []).length < 40 && !m.processes.includes(a.process)) m.processes.push(a.process);
+    if (t.tag === "manifest") {m.package = a.package || ""; if (a.sharedUserId) m.sharedUserId = a.sharedUserId;}
     else if (t.tag === "application") m.application = a.name || "";
     else if (t.tag.startsWith("uses-permission") && a.name) m.permissions.push(a.name);
     else if (/^(activity|activity-alias|service|receiver|provider)$/.test(t.tag)) m.components.push({tag: t.tag, name: a.name || a.targetActivity || "", permission: a.permission || "", actions: [], categories: []});
@@ -212,7 +213,7 @@ const join = (label: string, xs: string[], n = 5) => xs.length ? `${label}: ${xs
 // Two passes when bytecode attribution is available: `strict` ignores APIs called only from known library code and
 // library-only subclasses; behaviors that exist only in the lenient pass are kept as low-severity "library only".
 const COMBOS = new Set(["sms_stealer", "banking_trojan", "dropper", "otp_intercept"]);
-type Context = {certSha256?: string; endpoints?: Endpoint[]};
+type Context = {certSha256?: string; certSubject?: string; endpoints?: Endpoint[]};
 export function evaluate(sig: Signals, m: Manifest, extra: Behavior[] = [], context: Context = {}): Behavior[] {
   sig.resolve();
   const strict = rules(sig, m, extra, context, true);
@@ -299,6 +300,13 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   add("exfil_tunnel", "Layanan tunnel/webhook sementara", "high", [join("URL", str("tunnel"), 3), join("host", bare("tunnel").map(ep), 3)]);
   add("exfil_email", "Mengirim data lewat email (SMTP)", "medium", [join("API", api("smtp")), join("string", str("smtp"), 2)]);
   add("lure_keywords", "Kata kunci umpan penipuan (konteks Indonesia)", "low", [join("string", str("lure"), 6)]);
+  // Masquerading as an Android system component or a phone vendor's app: system/vendor namespace that the signer cannot
+  // own, a system shared UID (needs the platform key), or system process names. Genuine vendor apps carry the vendor's key.
+  const owner = SYSTEM_NAMESPACES.find(([re]) => re.test(m.package)), subject = context.certSubject || "", vendorSigned = owner ? owner[1].test(subject) : false;
+  const debugKey = /CN=Android Debug|android@android\.com/i.test(subject), sysUid = m.sharedUserId && /^android\.uid\.(?:system|phone|shell|bluetooth|nfc|media|log|se)$/.test(m.sharedUserId) ? m.sharedUserId : "";
+  const sysProcess = [m.package, ...m.processes || []].filter(p => SYSTEM_PROCESS.test(p) && !(owner && vendorSigned));
+  const namespaceClaim = owner && subject && !vendorSigned ? `nama paket ${m.package} memakai namespace ${owner[2]}, tetapi penanda tangan bukan ${owner[2]} (${subject.slice(0, 120)})` : "";
+  if (namespaceClaim || sysUid && !vendorSigned || sysProcess.length) add("system_impersonation", "Menyamar sebagai komponen sistem Android", namespaceClaim || sysUid || debugKey && sysProcess.length ? "high" : "medium", [namespaceClaim, sysUid ? `mengaku memakai UID sistem (${sysUid}), hanya mungkin dengan kunci platform pabrikan` : "", sysProcess.length ? `nama proses meniru proses sistem: ${[...new Set(sysProcess)].slice(0, 3).join(", ")}` : "", debugKey ? "ditandatangani sertifikat debug/uji, bukan kunci pabrikan" : ""]);
   // Combined patterns.
   const exfil = out.filter(b => b.id.startsWith("exfil_")), strong = exfil.filter(b => /telegram|webhook|tunnel/.test(b.id));
   const hidden = has("hidden_icon"), activities = m.components.filter(c => /^activity/.test(c.tag)).length, minimalUi = m.parsed && activities <= 1;
@@ -322,10 +330,23 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
   }
   // Context gate: everyday capabilities only matter next to a malicious pattern or channel. Without one they stay low, so
   // legitimate apps (SMS clients, keyboards, app stores, media players...) are not presented as threats.
-  const malicious = out.some(b => ["sms_stealer", "banking_trojan", "dropper", "exfil_telegram", "exfil_webhook", "exfil_tunnel"].includes(b.id) || ["c2_socket", "obfuscated_strings", "hidden_payload", "otp_intercept"].includes(b.id) && RANK[b.severity] >= RANK.high);
+  const malicious = out.some(b => ["sms_stealer", "banking_trojan", "dropper", "exfil_telegram", "exfil_webhook", "exfil_tunnel"].includes(b.id) || ["c2_socket", "obfuscated_strings", "hidden_payload", "otp_intercept", "system_impersonation"].includes(b.id) && RANK[b.severity] >= RANK.high);
   if (!malicious) for (const b of out) if (GATED.has(b.id) && b.severity === "medium") b.severity = "low";
   return out.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
 }
+// [package namespace, expected signer subject, display name]. AOSP/platform packages are signed by the device maker's
+// platform key, so Android namespaces accept any major vendor or the AOSP platform/release keys.
+const VENDOR = /Google|Android|Samsung|Xiaomi|Huawei|Honor|OPPO|Realme|vivo|OnePlus|Motorola|Lenovo|LG Electronics|Sony|Nokia|HMD|ASUS|Qualcomm|MediaTek|Infinix|Tecno|Transsion/i;
+const SYSTEM_NAMESPACES: [RegExp, RegExp, string][] = [
+  [/^com\.google\.android(?:\.|$)/, /O=Google|Google (?:Inc|LLC)/i, "Google"],
+  [/^(?:com\.samsung\.android|com\.sec\.android)(?:\.|$)/, /Samsung/i, "Samsung"],
+  [/^(?:com\.miui|com\.xiaomi)(?:\.|$)/, /Xiaomi|MIUI/i, "Xiaomi"],
+  [/^(?:com\.huawei|com\.hihonor)(?:\.|$)/, /Huawei|Honor/i, "Huawei/Honor"],
+  [/^(?:com\.oppo|com\.coloros|com\.oplus|com\.heytap|com\.realme)(?:\.|$)/, /OPPO|Oplus|Realme|HeyTap/i, "OPPO/Realme"],
+  [/^(?:com\.vivo|com\.bbk)(?:\.|$)/, /vivo|BBK/i, "vivo"],
+  [/^(?:android|com\.android)(?:\.|$)/, VENDOR, "sistem Android"],
+];
+const SYSTEM_PROCESS = /^(?:system|android(?:\.process\.[\w.]+)?|com\.android\.(?:systemui|phone|settings|providers\.[\w.]+|server[\w.]*|bluetooth|nfc|shell)|android\.process)$/;
 const GATED = new Set(["overlay", "keyboard", "contacts", "call_log", "device_identifiers", "location", "screen_capture", "camera_mic", "install_apps", "dynamic_code", "notification_listener", "device_admin", "exfil_panel", "exfil_ip", "exfil_email", "native_anti_analysis", "nfc_relay", "c2_socket", "obfuscated_strings"]);
 const SOURCE: Record<string, string> = {dex: "kode DEX", payload: "payload tersembunyi", resources: "resource", manifest: "manifest", exe: "string program", dotnet: "string .NET"};
 // Where an endpoint was found (Endpoint.source), in Indonesian.
