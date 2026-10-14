@@ -63,11 +63,12 @@ export async function assess(artifact:Artifact) {
   const sampled={...artifact,strings:artifact.strings.slice(0,180),urls:artifact.urls.slice(0,40)};
   const evidence=JSON.stringify(sampled);
   if(evidence.length>120000)throw new Error("Bukti ekstraksi terlalu besar untuk dinilai dengan andal. Pilih file yang lebih sederhana.");
-  // Both attempts leave room for VirusTotal, extraction and cleanup in the analysis route.
-  const deadline=Date.now()+135000;
+  // Both attempts fit the 300 s background job with room for extraction, reputation lookups and saving;
+  // gateway models can be slow under load, so each gets up to 110 s.
+  const deadline=Date.now()+230000;
   for(let i=0;i<models.length;i++) {
     try {
-      const timeoutMs=Math.min(65000,deadline-Date.now());
+      const timeoutMs=Math.min(110000,deadline-Date.now());
       if(timeoutMs<=0)throw new ModelError("Batas waktu analisis AI tercapai. Coba lagi.",false);
       const assessment=await requestAssessment(models[i],artifact,evidence,timeoutMs);
       return {assessment,model:models[i]};
