@@ -17,8 +17,8 @@
 <img src="https://img.shields.io/badge/Supabase-Postgres%20%2B%20pg__cron-3FCF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase"/>
 <img src="https://img.shields.io/badge/Vercel-Blob%20%2B%20Functions-000?style=flat-square&logo=vercel" alt="Vercel"/>
 <br/>
-<img src="https://img.shields.io/badge/tests-76%20passing-2ea44f?style=flat-square&logo=checkmarx&logoColor=white" alt="76 tests passing"/>
-<img src="https://img.shields.io/badge/real%20malware%20detected-45%2F45-2ea44f?style=flat-square&logo=android&logoColor=white" alt="45 of 45 real samples flagged"/>
+<img src="https://img.shields.io/badge/tests-95%20passing-2ea44f?style=flat-square&logo=checkmarx&logoColor=white" alt="95 tests passing"/>
+<img src="https://img.shields.io/badge/false%20alarms%20on%20F--Droid-0%2F19-2ea44f?style=flat-square&logo=android&logoColor=white" alt="0 of 19 legitimate apps falsely flagged"/>
 <img src="https://img.shields.io/badge/VirusTotal-integrated-394EFF?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal"/>
 <img src="https://img.shields.io/badge/abuse.ch-threat%20intel-c0392b?style=flat-square" alt="abuse.ch"/>
 <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license"/>
@@ -52,7 +52,7 @@ Kheronyx lets anyone **look inside a file before opening it**. It takes the file
 | 🛰️ **Threat intelligence** | VirusTotal reputation, abuse.ch **MalwareBazaar / URLhaus / ThreatFox** lookups, and **RDAP** domain age for every server found inside the file. |
 | 🧑‍🤝‍🧑 **Made for non-experts** | Every report translates technical findings into plain consequences (*"can read your OTP codes and drain your account"*) plus emergency steps if the app was already installed. |
 | 🤖 **AI verdict, with guardrails** | A schema-validated LLM report that must cite extracted evidence. Missing evidence can never produce a "safe" verdict. |
-| 🔗 **Campaign tracking** | Signer certificate SHA-256 values and redacted bot IDs link samples from the same scam actor. |
+| 🕵️ **Attacker trace** | A red-labelled *"Jejak pelaku"* card collects what points at the operator: C2 servers (panels, raw IP:port, DDNS, tunnels, Telegram bots, even when hidden in base64/XOR), the name and email typed into the signing certificate, its SHA-256 fingerprint (same fingerprint = same author) and the malware family, each with a copy button for reports to authorities. |
 | ☁️ **Close the tab, keep the job** | Analyses run as durable background jobs with automatic retries (Supabase `pg_cron`) and can be cancelled. |
 | 🌫️ **Cinematic UX** | A WebGL fractal-noise smoke transition pours out from behind the landing eye. |
 
@@ -82,16 +82,36 @@ A real **SMSspy** sample from MalwareBazaar, renamed the way victims receive it:
 </tr>
 </table>
 
-## 🎯 Measured on real malware
+## 🎯 Measured on real malware *and* real apps
 
-Measured with `scripts/eval-corpus.mts` on real samples from [MalwareBazaar](https://bazaar.abuse.ch). The run used the static extractor only, with no AI, no VirusTotal, and nothing executed:
+Measured with `scripts/eval-corpus.ts` on **142 real malware samples** from [MalwareBazaar](https://bazaar.abuse.ch) and **legitimate apps/files** as a false-alarm control. The run used the static extractor only, with no AI, no VirusTotal, no abuse.ch, and nothing executed. In production those layers only add to these numbers.
 
-| Family | Samples | 🔴 High / critical | 🟠 At least medium | Parse failures | Avg time |
-|---|:-:|:-:|:-:|:-:|:-:|
-| **SMSspy** (SMS/OTP stealers) | 30 | **93%** | **100%** | 0% | 91 ms |
-| **SpyNote** (Android RAT / banker) | 15 | **100%** | **100%** | 0% | 87 ms |
+**🦠 Malware: does Kheronyx catch it?**
 
-The first run exposed four real-world anti-analysis tricks: empty `classes.dex`, BadPack compression IDs, manifests with lying ZIP sizes, and poisoned string pools. Each is now handled and covered by tests.
+| Family | Type | Samples | 🔴 High / critical | 🟠 At least medium |
+|---|:-:|:-:|:-:|:-:|
+| **SMSspy** (SMS/OTP stealers) | APK | 30 | **100%** | **100%** |
+| **SpyNote** (RAT / banker) | APK | 15 | **100%** | **100%** |
+| **Cerberus** (banking trojan) | APK | 15 | **100%** | **100%** |
+| **Hydra** (banking trojan) | APK | 15 | **100%** | **100%** |
+| **Anubis** (banking trojan) | APK | 15 | 67% | 67% |
+| **Joker** (subscription fraud) | APK | 2 | 50% | **100%** |
+| **RedLine** (info-stealer) | EXE | 15 | 87% | 93% |
+| **Lumma** (info-stealer, Go crypters) | EXE | 15 | 73% | 87% |
+| **AgentTesla** (info-stealer) | EXE | 4 | **100%** | **100%** |
+| **Malicious PDFs** | PDF | 15 | 27% | 40% |
+
+**✅ Legitimate files: does Kheronyx falsely accuse them?**
+
+| Control set | Files | 🔴 High / critical | 🟠 At least medium |
+|---|:-:|:-:|:-:|
+| F-Droid apps (SMS client, dialer, keyboard, app stores, VLC, Element…) | 19 | **0%** | 5% |
+| Windows executables & DLLs (signed and unsigned) | 504 | 0.4% | 2% |
+| PDFs (incl. 69 with JavaScript / forms / open actions) | 312 | **0%** | **0%** |
+
+What the misses are: Anubis first-stage droppers that only "install another app" (statically identical to an app store), Go binaries without an encrypted blob, a 7-Zip self-extractor, and plain-text invoice PDFs with no links or code (email-fraud lures). Hash reputation (VirusTotal, MalwareBazaar) covers most of these in the live app.
+
+Evaluation also surfaced real anti-analysis tricks that are now handled and tested: empty `classes.dex`, BadPack compression IDs, manifests with lying ZIP sizes and zeroed headers, poisoned string pools, SMS stealers claiming the default-SMS role, C2 addresses hidden in base64/XOR, and copied Authenticode signatures.
 
 ## 🔬 How it works
 
@@ -184,12 +204,12 @@ Apply the SQL in [`supabase/migrations`](supabase/migrations) to your project. T
 
 ```sh
 npm run typecheck
-npm test            # 76 tests: parsers, fuzzing, signing, jobs, threat intel
+npm test            # 95 tests: parsers, fuzzing, signing, jobs, threat intel, calibration
 npm run build
 
 # Detection accuracy on real samples (never executed, stored read-only in .corpus/)
-ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.mts fetch --tag SMSspy --limit 30
-npx tsx scripts/eval-corpus.mts run .corpus/SMSspy
+ABUSE_CH_AUTH_KEY=... npx tsx scripts/eval-corpus.ts fetch --tag SMSspy --limit 30
+npx tsx scripts/eval-corpus.ts run .corpus/SMSspy
 ```
 
 ## 📁 Project structure
