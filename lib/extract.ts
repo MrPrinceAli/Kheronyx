@@ -12,7 +12,9 @@ import { nativeScan } from "./apk-native";
 import { apkSigning, signingIndicators } from "./apk-signing";
 import { entropy, findPayloads } from "./apk-payloads";
 import { importBehaviors, readImports } from "./pe-imports";
-import { certInfo, certSummary, pkcs7 } from "./certs";
+import { authenticodeDigest, certInfo, certSummary, pkcs7 } from "./certs";
+import { crypterBehaviors, type Signature } from "./pe-crypter";
+import { pdfBehaviors, pdfHosts, type PdfFacts } from "./pdf-behaviors";
 import { impersonation, readResources, resourceBehaviors, type PeResources, type SignerInfo } from "./pe-resources";
 import { familyMarkers, parseDotnet, type Dotnet } from "./dotnet";
 import { identify, overlay } from "./pe-packers";
@@ -124,13 +126,19 @@ function peParse(buffer: Buffer, a: Artifact) {
   const dense=sections.filter(s=>s.size>1000 && s.entropy>7.2).map(s=>`${s.name} (${s.entropy})`);
   if(packers.length || !dotnet && !id.installer && !id.script && total<15 && dense.length)peBehaviors.push({id:"packed",name:packers.length?`Dikemas/diproteksi packer (${packers.slice(0,3).join(", ")})`:"Kemungkinan dikemas (packed)",severity:"medium",evidence:[packers.length?`teridentifikasi dari section/penanda: ${packers.join(", ")}`:"",`${total} fungsi import${names.some(f=>/^(?:LoadLibrary|GetProcAddress)/.test(f))?" (resolusi API dinamis lewat LoadLibrary/GetProcAddress)":""}`,dense.length?`section entropi tinggi: ${dense.slice(0,4).join(", ")}`:""].filter(Boolean)});
   // Authenticode: WIN_CERTIFICATE at a file offset (not an RVA). Certificates are read, signatures are not verified.
-  const security=dir(4); let authenticode:Record<string,unknown>|undefined;
+  const security=dir(4); let authenticode:Record<string,unknown>|undefined, signature:Signature="none";
   if(security.size && security.rva+8<=buffer.length && security.rva+security.size<=buffer.length) {
     try {
       const length=Math.min(buffer.readUInt32LE(security.rva),security.size); if(buffer.readUInt16LE(security.rva+6)!==2 || length<8 || length>4*MB)throw new Error();
-      const {certs,signerSerials}=pkcs7(buffer.subarray(security.rva+8,security.rva+length)), infos=certs.slice(0,8).flatMap(c=>{try{return [certInfo(c)];}catch{return [];}});
+      const blob=buffer.subarray(security.rva+8,security.rva+length), {certs,signerSerials}=pkcs7(blob), infos=certs.slice(0,8).flatMap(c=>{try{return [certInfo(c)];}catch{return [];}});
       const signer=infos.find(c=>signerSerials.includes(c.serial))||infos[0];
-      if(signer){const {serial:_,selfSigned,...rest}=signer;authenticode={signer:rest,selfSigned,chain:infos.map(c=>c.subject).slice(0,4)};if(selfSigned)peBehaviors.push({id:"self_signed",name:"Authenticode swa-tanda-tangan",severity:"medium",evidence:[`Penanda tangan tidak diterbitkan CA: ${certSummary(signer)}`]});}
+      // Image hash (whole file minus CheckSum, the certificate-table entry and the table itself) vs. the signed hash:
+      // a mismatch proves a copied ("cloned") signature or a file modified after signing; a match is not a verification.
+      let claimed:ReturnType<typeof authenticodeDigest>; try{claimed=authenticodeDigest(blob);}catch{}
+      const sum=opt+64, entry=directory+32, match=claimed && entry+8<=security.rva?(()=>{const h=createHash(claimed.algorithm);h.update(buffer.subarray(0,sum));h.update(buffer.subarray(sum+4,entry));h.update(buffer.subarray(entry+8,security.rva));return h.digest().equals(claimed.digest);})():undefined;
+      if(signer){const {serial:_,selfSigned,...rest}=signer;authenticode={signer:rest,selfSigned,chain:infos.map(c=>c.subject).slice(0,4),...match!==undefined?{imageHashMatches:match}:{}};if(selfSigned)peBehaviors.push({id:"self_signed",name:"Authenticode swa-tanda-tangan",severity:"medium",evidence:[`Penanda tangan tidak diterbitkan CA: ${certSummary(signer)}`]});
+        signature=match===false?"mismatch":selfSigned?"self":match?"valid":"none";
+        if(match===false)peBehaviors.push({id:"signature_mismatch",name:"Tanda tangan digital tidak cocok dengan isi file",severity:"medium",evidence:[`hash ${claimed!.algorithm.toUpperCase()} isi file berbeda dari hash yang ditandatangani "${String(rest.subject||"?").slice(0,100)}"`,"tanda tangan disalin dari file lain (pola peniruan penerbit) atau file diubah setelah ditandatangani; Windows menganggapnya tidak sah"]});}
     } catch {a.limitations.push("Sertifikat Authenticode ada tetapi tidak berhasil dibaca.");}
   }
   if(resources)peBehaviors.push(...resourceBehaviors(resources,Boolean(id.installer)),...impersonation(resources.version,authenticode as SignerInfo|undefined));
@@ -138,6 +146,7 @@ function peParse(buffer: Buffer, a: Artifact) {
   if(ov && /\(PE\)/.test(ov.type) && !id.installer)peBehaviors.push({id:"overlay_pe",name:"Program lain disisipkan di overlay",severity:"medium",evidence:[`${ov.type} di offset ${ov.offset}, ${extra} byte setelah section terakhir`]});
   if(ov && /padding/.test(ov.type) && extra>=10*MB)peBehaviors.push({id:"inflated",name:"Ukuran file digelembungkan (padding overlay)",severity:"medium",evidence:[`${formatMB(extra)} data berulang/kosong setelah program; teknik umum untuk melewati batas ukuran pemindaian antivirus`]});
   if(ov && /entropi tinggi/.test(ov.type) && extra>=65536 && !id.installer && !id.script)peBehaviors.push({id:"overlay_dense",name:"Data berentropi tinggi di overlay",severity:"low",evidence:[`${extra} byte, entropi ${ov.entropy}; bisa berupa payload terenkripsi atau data aplikasi terkompresi`]});
+  try{peBehaviors.push(...crypterBehaviors(buffer,p,{sections:sections.map(s=>({...s,flags:parseInt(s.flags,16)})),overlay:ov,installer:id.installer,script:id.script,packers,dotnet,imports:total,dll:Boolean(buffer.readUInt16LE(p+22)&0x2000),subsystem:buffer.readUInt16LE(opt+68),entry:buffer.readUInt32LE(opt+16),signature}));}catch{a.limitations.push("Pemeriksaan payload terenkripsi (pola crypter) tidak selesai.");}
   if(ov?.afterCertificate && ov.afterCertificate>64)peBehaviors.push({id:"after_certificate",name:"Data disisipkan setelah sertifikat Authenticode",severity:"medium",evidence:[`${ov.afterCertificate} byte setelah tabel sertifikat; bagian ini tidak tercakup tanda tangan dan bisa membawa konfigurasi/payload`]});
   peBehaviors.push(...familyMarkers([...strings,...net?.names||[]]));
   const priority=(f:string)=>peBehaviors.some(b=>b.evidence.some(e=>e.endsWith(`!${f}`)))?0:1; let room=500;
@@ -300,8 +309,11 @@ function apkParse(buffer: Buffer, a: Artifact) {
   a.limitations.push("APK tidak dijalankan. Bytecode hanya dibedah statis (pemanggil API sensitif, string tersamar sederhana), tidak didekompilasi penuh; kode yang didekripsi/diunduh saat runtime tidak terlihat. Library native hanya dibaca simbol dan string-nya. Tanda tangan v2/v3 diverifikasi kriptografis (integritas isi, bukan identitas penerbit); v1 hanya dibaca sertifikatnya. Izin luas bukan bukti malware.");
 }
 const PDF_TOKENS:[string,string][]=[["JavaScript|JS","JavaScript tertanam"],["OpenAction","Tindakan saat dibuka"],["AA","Tindakan otomatis (/AA)"],["Launch","Tindakan launch (membuka program/file)"],["EmbeddedFiles?","File tertanam"],["SubmitForm","Formulir mengirim data (/SubmitForm)"],["ImportData","Impor data eksternal (/ImportData)"],["RichMedia","Konten RichMedia/Flash"],["XFA","Formulir XFA"]];
+type PdfRaw={launch:string[];submit:string[];openJs:string[];uris:string[];files:string[];acroForm:boolean;uriTokens:number};
+const pdfString=(s:string)=>(s.startsWith("\xfe\xff")?Buffer.from(s.slice(2,2+(s.length-2&~1)),"latin1").swap16().toString("utf16le"):s.replace(/\\([()\\])/g,"$1")).replace(/[\x00-\x1f\x7f]/g,"").trim();
 // Raw token scan over the file plus bounded inflation of compressed object streams (/ObjStm), where droppers often hide actions.
-function pdfTokens(buffer:Buffer,raw:string,a:Artifact) {
+// Also returns the raw facts lib/pdf-behaviors.ts needs when pdf.js cannot parse the document (encrypted/broken).
+function pdfTokens(buffer:Buffer,raw:string,a:Artifact):PdfRaw {
   const objectAt=(text:string,i:number)=>{const m=[...text.slice(Math.max(0,i-3000),i).matchAll(/(\d+)\s+(\d+)\s+obj\b/g)].pop();return m?`obj ${m[1]} ${m[2]}`:"obj ?";};
   const segments:{text:string;where:(i:number)=>string}[]=[{text:raw,where:i=>objectAt(raw,i)}]; let decoded=0;
   for(const m of raw.matchAll(/\/Type\s*\/ObjStm\b/g)) {
@@ -313,40 +325,68 @@ function pdfTokens(buffer:Buffer,raw:string,a:Artifact) {
   }
   if(segments.length>1)a.metadata.objectStreams=segments.length-1;
   const snippet=(text:string,i:number)=>text.slice(Math.max(0,i-40),i+140).replace(/[^\x20-\x7e]+/g," ").replace(/\s+/g," ").trim();
+  const out:PdfRaw={launch:[],submit:[],openJs:[],uris:[],files:[],acroForm:false,uriTokens:0};
   for(const [token,name] of PDF_TOKENS) {
     const re=new RegExp(`\\/(?:${token})(?![\\w#])`,"g"); let count=0; const context:string[]=[];
-    for(const seg of segments)for(const m of seg.text.matchAll(re)){if(count++<3)context.push(`${seg.where(m.index)}: ${snippet(seg.text,m.index)}`);if(count>100000)break;}
+    for(const seg of segments)for(const m of seg.text.matchAll(re)){
+      if(count++<3)context.push(`${seg.where(m.index)}: ${snippet(seg.text,m.index)}`);if(count>100000)break;
+      // Form submissions: the target URL sits in the action's /F file specification right after the token.
+      if(/SubmitForm/.test(token) || /ImportData/.test(token)){const u=seg.text.slice(m.index,m.index+600).match(/https?:\/\/[^\s()<>\\]{4,300}/);if(u && out.submit.length<10)out.submit.push(u[0]);}
+    }
     if(count)a.indicators.push({name,evidence:`${count} kemunculan /${token.replace(/s\?$/,"")}; konteks: ${context.join(" | ")}`.slice(0,900)});
-    if(name==="Tindakan saat dibuka" && context.some(c=>/\/(?:JS|JavaScript)\b/.test(c)))a.indicators.push({name:"JavaScript dijalankan saat dokumen dibuka",evidence:context.filter(c=>/\/(?:JS|JavaScript)\b/.test(c)).join(" | ").slice(0,600)});
+    if(name==="Tindakan saat dibuka" && context.some(c=>/\/(?:JS|JavaScript)\b/.test(c))){out.openJs=context.filter(c=>/\/(?:JS|JavaScript)\b/.test(c));a.indicators.push({name:"JavaScript dijalankan saat dokumen dibuka",evidence:out.openJs.join(" | ").slice(0,600)});}
+    if(name.startsWith("Tindakan launch"))out.launch=context;
   }
+  for(const seg of segments) {
+    if(/\/AcroForm\b/.test(seg.text))out.acroForm=true; out.uriTokens+=Math.min(1000,(seg.text.match(/\/URI\b/g)||[]).length);
+    for(const m of seg.text.matchAll(/\/URI\s*\(((?:[^()\\]|\\.){4,1000})\)/g)){if(out.uris.length>=100)break;const u=pdfString(m[1]);if(/^[a-z][\w+.-]*:/i.test(u))out.uris.push(u.slice(0,1000));}
+    for(const m of seg.text.matchAll(/\/Type\s*\/Filespec\b/g)){if(out.files.length>=30)break;const f=seg.text.slice(m.index,m.index+800).match(/\/(?:UF|F)\s*\(((?:[^()\\]|\\.){1,200})\)/);if(f && /\/EmbeddedFile|\/EF\b/.test(seg.text.slice(m.index,m.index+800)))out.files.push(pdfString(f[1]).slice(0,120));}
+  }
+  return out;
 }
 async function pdf(buffer:Buffer,a:Artifact) {
-  pdfTokens(buffer,buffer.toString("latin1"),a);
-  const {getDocument}=await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const task=getDocument({data:new Uint8Array(buffer),isEvalSupported:false,useSystemFonts:false,disableFontFace:true,useWorkerFetch:false,verbosity:0});
+  const raw=pdfTokens(buffer,buffer.toString("latin1"),a), facts:PdfFacts={text:"",links:[],autoJs:[],js:"",acroForm:raw.acroForm,locked:false,parsed:false,attachments:[]};
+  const text:string[]=[], scripts:string[]=[];
   try {
-    const doc=await task.promise; a.metadata.pages=doc.numPages;
-    const metadata=await doc.getMetadata();a.metadata.info=metadata.info;
-    const text:string[]=[], scripts:string[]=[], local:string[]=[];
-    const actions=await doc.getJSActions();if(actions)scripts.push(JSON.stringify(actions));
-    for(let i=1;i<=Math.min(doc.numPages,30);i++) {
-      const page=await doc.getPage(i);
-      if(i<=10){const content=await page.getTextContent();text.push(content.items.map(i=>"str" in i?i.str:"").join(" ").slice(0,2500));}
-      for(const n of (await page.getAnnotations()).slice(0,100)) {
-        if(n.url)a.urls.push(String(n.url).slice(0,1000));else if(n.unsafeUrl){const u=String(n.unsafeUrl).slice(0,300);if(/^(?:file:|smb:|\\\\)/i.test(u))local.push(u);else if(/^https?:/i.test(u))a.urls.push(u);}
-        if(n.actions)scripts.push(JSON.stringify({page:i,annotation:n.subtype,actions:n.actions}));
+    const {getDocument}=await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const task=getDocument({data:new Uint8Array(buffer),isEvalSupported:false,useSystemFonts:false,disableFontFace:true,useWorkerFetch:false,verbosity:0});
+    try {
+      const doc=await task.promise; a.metadata.pages=facts.pages=doc.numPages;
+      const metadata=await doc.getMetadata();a.metadata.info=metadata.info;
+      const local:string[]=[];
+      // Document-level JS (OpenAction, catalog /AA, named scripts) runs as soon as the document opens.
+      const actions=await doc.getJSActions();if(actions && Object.keys(actions).length){scripts.push(JSON.stringify(actions));for(const [k,v] of Object.entries(actions).slice(0,20))for(const code of (Array.isArray(v)?v:[v]).slice(0,5))facts.autoJs.push(`${k}: ${String(code).slice(0,400)}`);}
+      for(let i=1;i<=Math.min(doc.numPages,30);i++) {
+        const page=await doc.getPage(i), [x0,y0,x1,y1]=page.view, area=Math.abs((x1-x0)*(y1-y0))||1;
+        if(i<=10){const content=await page.getTextContent();text.push(content.items.map(i=>"str" in i?i.str:"").join(" ").slice(0,2500));}
+        for(const n of (await page.getAnnotations()).slice(0,100)) {
+          const r=Array.isArray(n.rect) && n.rect.length===4?n.rect.map(Number):[0,0,0,0], cover=Math.abs((r[2]-r[0])*(r[3]-r[1]))/area;
+          let link="";if(n.url)link=String(n.url).slice(0,1000);else if(n.unsafeUrl){const u=String(n.unsafeUrl).slice(0,300);if(/^(?:file:|smb:|\\\\)/i.test(u))local.push(u);else if(/^https?:/i.test(u))link=u;}
+          if(link){a.urls.push(link);if(facts.links.length<200)facts.links.push({url:link,page:i,cover:Number.isFinite(cover)?Math.round(cover*100)/100:0});}
+          if(n.actions)scripts.push(JSON.stringify({page:i,annotation:n.subtype,actions:n.actions}));
+        }
+        const pageActions=await page.getJSActions();if(pageActions && Object.keys(pageActions).length){scripts.push(JSON.stringify({page:i,actions:pageActions}));for(const [k,v] of Object.entries(pageActions))if(/^Page(?:Open|Close)$/.test(k))for(const code of (Array.isArray(v)?v:[v]).slice(0,5))facts.autoJs.push(`halaman ${i} ${k}: ${String(code).slice(0,400)}`);}
+        page.cleanup();
       }
-      const pageActions=await page.getJSActions();if(pageActions && Object.keys(pageActions).length)scripts.push(JSON.stringify({page:i,actions:pageActions}));
-      page.cleanup();
-    }
-    a.metadata.textExcerpt=text.join("\n").slice(0,18000);
-    if(scripts.length)a.metadata.javascript=scripts.join("\n").slice(0,20000);
-    if(local.length)a.indicators.push({name:"Tautan ke file lokal/jaringan",evidence:`Tautan non-HTTP dapat membocorkan kredensial jaringan atau membuka file: ${[...new Set(local)].slice(0,5).join(", ")}`});
-    const attachments=await doc.getAttachments();if(attachments)a.metadata.attachments=Object.values(attachments).slice(0,30).map(value=>{const x=value as {filename:string;content:Uint8Array};return {filename:x.filename,size:x.content.length};});
-    if(doc.numPages>10)a.limitations.push(`Teks hanya diekstrak dari 10 halaman pertama; tautan, anotasi, dan skrip halaman dari ${Math.min(doc.numPages,30)} halaman pertama.`);
-    stringSignals(a,[...text,...scripts,...a.urls],[],false);
-    a.limitations.push("PDF tidak dibuka secara interaktif; lampiran tidak dipindai secara terpisah dan eksploit reader tidak dapat dipastikan.");
-  } finally {await task.destroy();}
+      a.metadata.textExcerpt=facts.text=text.join("\n").slice(0,18000);
+      if(local.length)a.indicators.push({name:"Tautan ke file lokal/jaringan",evidence:`Tautan non-HTTP dapat membocorkan kredensial jaringan atau membuka file: ${[...new Set(local)].slice(0,5).join(", ")}`});
+      const attachments=await doc.getAttachments();if(attachments){facts.attachments=Object.values(attachments).slice(0,30).map(value=>{const x=value as {filename:string;content:Uint8Array};return {filename:String(x.filename).slice(0,200),size:x.content.length,head:Buffer.from(x.content.subarray(0,8)).toString("latin1")};});a.metadata.attachments=facts.attachments.map(({head:_,...x})=>x);}
+      if(doc.numPages>10)a.limitations.push(`Teks hanya diekstrak dari 10 halaman pertama; tautan, anotasi, dan skrip halaman dari ${Math.min(doc.numPages,30)} halaman pertama.`);
+      facts.parsed=true;
+      a.limitations.push("PDF tidak dibuka secara interaktif; lampiran tidak dipindai secara terpisah dan eksploit reader tidak dapat dipastikan.");
+    } finally {await task.destroy();}
+  } catch(error) {
+    if(error instanceof Error && error.name==="PasswordException"){facts.locked=true;a.limitations.push("PDF dikunci kata sandi: teks, tautan, dan skrip terenkripsi sehingga tidak dapat diperiksa.");}
+    throw error;
+  } finally {
+    // Behaviors are computed even when pdf.js fails (encrypted/broken files), from the raw token scan.
+    try {
+      if(scripts.length)a.metadata.javascript=facts.js=scripts.join("\n").slice(0,20000);
+      if(!facts.parsed)a.urls.push(...raw.uris.filter(u=>/^https?:/i.test(u)).slice(0,40));
+      const hosts=pdfHosts([...facts.links.map(l=>l.url),...raw.uris,...raw.submit]);if(hosts.length)a.metadata.campaign={hosts};
+      stringSignals(a,[...text,...scripts,...a.urls],pdfBehaviors(facts,raw),false);
+    } catch(error){console.error("Kheronyx PDF behaviors failed:",error instanceof Error?error.message:error);a.limitations.push("Penilaian perilaku PDF tidak selesai.");}
+  }
 }
 export async function extractFile(buffer:Buffer,filename:string):Promise<Artifact> {
   const kind=fileKind(filename); if(!buffer.length || buffer.length>KIND_LIMITS[kind])throw new Error(`Ukuran file ${kind.toUpperCase()} harus antara 1 byte dan ${formatMB(KIND_LIMITS[kind])}.`);

@@ -22,6 +22,19 @@ export function pkcs7(b: Buffer): {certs: Buffer[]; signerSerials: string[]} {
   const signerSerials = infos?.tag === 0x31 ? children(b, infos).slice(0, 10).flatMap(si => {const id = si.tag === 0x30 ? children(b, si)[1] : undefined; const serial = id?.tag === 0x30 ? children(b, id)[1] : undefined; return serial?.tag === 2 ? [b.subarray(serial.start, serial.end).toString("hex").replace(/^(00)+(?=.)/, "").toUpperCase()] : [];}) : [];
   return {certs, signerSerials};
 }
+// Authenticode SpcIndirectDataContent.messageDigest: the PE image hash the signer claims to have signed. Comparing it with
+// the file's own hash only proves a mismatch (copied/"cloned" signature or file modified after signing); a match is NOT a
+// signature verification. Returns the node:crypto algorithm name and digest, or undefined for other content types.
+const DIGESTS: Record<string, string> = {"2b0e03021a": "sha1", "608648016503040201": "sha256", "608648016503040202": "sha384", "608648016503040203": "sha512", "2a864886f70d0205": "md5"};
+export function authenticodeDigest(b: Buffer): {algorithm: string; digest: Buffer} | undefined {
+  const root = tlv(b, 0, b.length), [, wrapped] = root.tag === 0x30 ? children(b, root) : [];
+  if (wrapped?.tag !== 0xa0) return;
+  const sd = tlv(b, wrapped.start, wrapped.end), encap = sd.tag === 0x30 ? children(b, sd)[2] : undefined, [, content] = encap?.tag === 0x30 ? children(b, encap) : [];
+  if (content?.tag !== 0xa0) return;
+  const spc = tlv(b, content.start, content.end), info = spc.tag === 0x30 ? children(b, spc)[1] : undefined, [alg, digest] = info?.tag === 0x30 ? children(b, info) : [];
+  const oid = alg?.tag === 0x30 ? children(b, alg)[0] : undefined, name = oid?.tag === 6 ? DIGESTS[b.subarray(oid.start, oid.end).toString("hex")] : undefined;
+  return name && digest?.tag === 4 && digest.end - digest.start <= 64 ? {algorithm: name, digest: b.subarray(digest.start, digest.end)} : undefined;
+}
 const iso = (s: string) => {const d = new Date(s); return Number.isNaN(d.getTime()) ? s.slice(0, 40) : d.toISOString();};
 const dn = (s: string) => s.split("\n").filter(Boolean).join(", ").replace(/[\x00-\x1f\x7f]/g, "").slice(0, 300);
 export function certInfo(der: Buffer): CertInfo {

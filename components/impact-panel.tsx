@@ -1,4 +1,4 @@
-import { Ban, Bot, Download, EyeOff, FileLock2, KeyRound, Landmark, MessageSquareWarning, Nfc, PhoneForwarded, Send, ShieldAlert, Smartphone, UserRound, VenetianMask, Wifi } from "lucide-react";
+import { Ban, Bot, CreditCard, Download, EyeOff, FileCode2, FileLock2, KeyRound, Landmark, MessageSquareWarning, Nfc, PhoneForwarded, Send, ShieldAlert, Smartphone, UserRound, VenetianMask, Wifi } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Report } from "@/lib/types";
 import styles from "./impact.module.css";
@@ -16,10 +16,12 @@ const IMPACTS: Impact[] = [
   {icon: Wifi, title: "Mengirim data curian ke penipu", text: "Data yang diambil dikirim langsung ke penipu, misalnya lewat bot Telegram, email, atau server tersembunyi.", ids: ["exfil_telegram", "exfil_webhook", "exfil_panel", "exfil_ip", "exfil_tunnel", "exfil_firebase", "exfil_email"]},
   {icon: Bot, title: "Bisa dikendalikan dari jauh", text: "Penipu bisa memberi perintah ke perangkat Anda dari jarak jauh, atau menyusupkan kode ke program lain.", ids: ["net_rat", "injection", "net_injection", "c2_socket"]},
   {icon: Download, title: "Memasang program jahat lain", text: "Setelah terpasang, bisa mengunduh atau memasang aplikasi dan program jahat tambahan tanpa Anda sadari.", ids: ["dropper", "install_apps", "dynamic_code", "hidden_payload", "download_execute", "net_download_exec", "net_reflective_load", "shell_exec", "overlay_pe"]},
+  {icon: FileCode2, title: "Menjalankan program/skrip saat dibuka", text: "Begitu dokumen dibuka, bisa langsung menjalankan skrip, membuka program lain, atau membawa program tersembunyi sebagai lampiran.", ids: ["pdf_autorun_js", "pdf_launch", "pdf_embedded_exe"]},
+  {icon: CreditCard, title: "Halaman login/pembayaran palsu", text: "Membujuk Anda menekan tautan atau tombol yang membuka halaman palsu, lalu meminta password, data kartu, PIN, atau OTP Anda.", ids: ["pdf_phishing", "pdf_link_only", "pdf_submit_form"]},
   {icon: EyeOff, title: "Bersembunyi dan sulit dihapus", text: "Bisa menyembunyikan ikonnya, aktif sendiri saat perangkat dinyalakan, atau meminta hak admin supaya sulit di-uninstall.", ids: ["hidden_icon", "device_admin", "boot_persistence", "persistence", "net_persistence", "requires_admin"]},
   {icon: FileLock2, title: "Mengunci file untuk tebusan", text: "Pola ransomware: file Anda bisa dikunci dan cadangannya dihapus, lalu Anda diminta membayar tebusan.", ids: ["file_encryption", "shadow_delete"]},
-  {icon: VenetianMask, title: "Menyamar sebagai pihak resmi", text: "Mengaku sebagai bank, kurir, undangan, atau instansi resmi supaya Anda percaya lalu memasangnya.", ids: ["brand_impersonation", "lure_keywords"]},
-  {icon: Ban, title: "Sengaja menghindari pemeriksaan", text: "Isinya disamarkan atau dikunci agar sulit diperiksa. Ini umum pada aplikasi jahat, meski kadang juga dipakai aplikasi resmi.", ids: ["packer", "packed", "obfuscated_strings", "anti_analysis", "native_anti_analysis", "net_anti_analysis", "net_obfuscator", "net_defense_evasion"]},
+  {icon: VenetianMask, title: "Menyamar sebagai pihak resmi", text: "Mengaku sebagai bank, kurir, undangan, atau instansi resmi supaya Anda percaya lalu memasangnya.", ids: ["brand_impersonation", "lure_keywords", "signature_mismatch"]},
+  {icon: Ban, title: "Sengaja menghindari pemeriksaan", text: "Isinya disamarkan atau dikunci agar sulit diperiksa. Ini umum pada aplikasi jahat, meski kadang juga dipakai aplikasi resmi.", ids: ["packer", "packed", "obfuscated_strings", "anti_analysis", "native_anti_analysis", "net_anti_analysis", "net_obfuscator", "net_defense_evasion", "encrypted_payload", "no_imports", "pdf_locked"]},
 ];
 const RANK: Record<string, number> = {low: 0, medium: 1, high: 2, critical: 3};
 
