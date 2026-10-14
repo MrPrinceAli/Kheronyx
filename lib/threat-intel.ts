@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { rateLimit } from "./db";
 import type { Artifact, ThreatIntelResult } from "./types";
-import { BENIGN, SHARED, hostOf, privateIp, publicHost, registrableDomain, under } from "./hosts";
+import { BENIGN, SHARED, deadDrop, hostOf, privateIp, publicHost, registrableDomain, under } from "./hosts";
 
 // External reputation for a finished extraction: abuse.ch (MalwareBazaar hash, URLhaus/ThreatFox hosts) and RDAP domain age.
 // Only the SHA-256, hostnames and a few clean payload URLs leave the server (never file bytes, query strings or redacted
@@ -14,14 +14,17 @@ export { privateIp, hostOf, publicHost, registrableDomain };
 
 // Hosts (exfil/panel endpoints first) and clean payload URLs extracted by lib/extract.ts.
 export function threatIntelTargets(artifact: Artifact) {
-  const campaign = artifact.metadata?.campaign as {hosts?: unknown} | undefined;
+  const campaign = artifact.metadata?.campaign as {hosts?: unknown; deadDrops?: unknown} | undefined;
   const raw = [...Array.isArray(campaign?.hosts) ? campaign.hosts : [], ...Array.isArray(artifact.urls) ? artifact.urls : []].filter((x): x is string => typeof x === "string").slice(0, 300);
   const hosts = [...new Set(raw.map(hostOf))].filter(h => h && publicHost(h) && !under(h, SHARED)).slice(0, MAX_HOSTS);
   // Full URLs only without query/userinfo/redaction marks (they may carry tokens), and never bot/webhook API paths.
-  const urls = [...new Set(artifact.urls || [])].filter(u => {
+  // Dead-drop documents (paste/raw/export URLs on shared platforms) are looked up by full URL first; their plain id
+  // query (e.g. Drive "uc?export=download&id=...") is kept, anything secret-looking is not sent.
+  const drops = (Array.isArray(campaign?.deadDrops) ? campaign.deadDrops : []).filter((u): u is string => typeof u === "string" && u.length <= 200 && /^https?:\/\/[^/]+\/./i.test(u) && !/[…@#]|token|key|secret|sig|auth|passw|session/i.test(u) && deadDrop(u) !== "");
+  const urls = [...new Set([...drops, ...[...new Set(artifact.urls || [])].filter(u => {
     if (typeof u !== "string" || u.length > 200 || /[…?@#]|\/bot\d|webhook|token|api[_-]?key|secret|passw/i.test(u) || !/^https?:\/\/[^/]+\/./i.test(u)) return false;
     const h = hostOf(u); return Boolean(h) && (under(h, SHARED) ? PAYLOAD.test(u) : publicHost(h));
-  }).sort((x, y) => Number(PAYLOAD.test(y)) - Number(PAYLOAD.test(x))).slice(0, MAX_URLS);
+  }).sort((x, y) => Number(PAYLOAD.test(y)) - Number(PAYLOAD.test(x)))])].slice(0, MAX_URLS);
   const domains = [...new Set(hosts.map(registrableDomain).filter((d): d is string => Boolean(d) && !under(d!, BENIGN) && !under(d!, SHARED)))].slice(0, MAX_DOMAINS);
   return {hosts, urls, domains};
 }

@@ -4,7 +4,9 @@ import type { Artifact, FileKind } from "./types";
 import { readZip, unzipEntry, salvageBinaryXml } from "./zip";
 import { androidManifest, resourceStrings } from "./axml";
 import { KIND_LIMITS, MB, formatMB } from "./limits";
-import { libraryClass, parseDex } from "./dex";
+import { libraryClass, parseDex, type CryptoFacts } from "./dex";
+import { cryptoJobs, decryptConfigs, type Decrypted } from "./config-decrypt";
+import { deadDrop } from "./hosts";
 import { Signals, behaviorIndicator, behaviorMetadata, evaluate, hasLauncher, manifestModel, member, redactSecrets, revealable, trackedRef, trackedString, type Behavior } from "./behaviors";
 import { decodeHidden, hiddenStrings } from "./deobfuscate";
 import { packerClasses, packerFiles, packerScan } from "./apk-packers";
@@ -43,10 +45,12 @@ function asciiRuns(buffer: Buffer) {
   const out: string[] = []; for (const m of buffer.subarray(0, 8 * MB).toString("latin1").matchAll(/[\x20-\x7e]{7,300}/g)) {if (out.length >= 20000) break; const s = m[0]; if (s.includes(".") || s.includes(":AA") || /^[A-Za-z0-9+/]{16,}={0,2}$/.test(s)) out.push(s);}
   return out;
 }
+// Full dead-drop URLs (no redaction marks) for a URLhaus URL lookup: the host alone is a shared platform.
+const deadDropUrls=(list:Endpoint[])=>list.filter(e=>e.kind==="deaddrop" && !e.value.includes("…")).map(e=>e.value).slice(0,3);
 // Exfiltration/lure signals that apply to any file type (Telegram bots, webhooks, raw-IP panels...).
 function stringSignals(a: Artifact, strings: string[], extra: Behavior[] = [], lure = true, endpoints: Endpoint[] = []) {
   const sig = new Signals(); sig.strings(strings);
-  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra, {endpoints}).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || b.id === "c2_socket" || lure && b.id === "lure_keywords");
+  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra, {endpoints}).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || b.id === "c2_socket" || b.id === "dead_drop" || lure && b.id === "lure_keywords");
   if (list.length) {a.metadata.behaviors = behaviorMetadata(list); a.indicators.unshift(...list.map(behaviorIndicator));}
   a.urls.push(...sig.rankedUrls().slice(0, 40));
 }
@@ -162,7 +166,7 @@ function peParse(buffer: Buffer, a: Artifact) {
     const eps=new EndpointCollector(), whole=(s:string)=>netApi && /^\s*(?:\d{1,3}\.){3}\d{1,3}\s*$/.test(s);
     eps.add([...a.strings,...asciiRuns(buffer),...wide],"exe",{context:whole,decode:true}); if(net)eps.add(net.strings,"dotnet",{context:whole,decode:true});
     endpoints=eps.finish({smtp:names.some(f=>/smtp/i.test(f)) || Boolean(net?.meta.notableMemberRefs.some(r=>/Net\.Mail\./.test(r)))});
-    if(endpoints.length){a.metadata.endpoints=endpoints;const hosts=endpointHosts(endpoints);if(hosts.length)a.metadata.campaign={hosts};}
+    if(endpoints.length){a.metadata.endpoints=endpoints;const hosts=endpointHosts(endpoints),deadDrops=deadDropUrls(endpoints);if(hosts.length || deadDrops.length)a.metadata.campaign={hosts,...deadDrops.length?{deadDrops}:{}};}
   } catch {a.limitations.push("Alamat server (endpoint) di dalam program tidak berhasil diekstrak sepenuhnya.");}
   stringSignals(a,strings,peBehaviors,true,endpoints);
   if(net)a.strings.unshift(...net.meta.userStringsSample);
@@ -222,15 +226,19 @@ function apkParse(buffer: Buffer, a: Artifact) {
   // Base64/hex-hidden endpoints are tracked too, so a hidden IP loaded only by SDK code is not reported as the app's C2.
   const hiddenHost=(s:string)=>s.length>=16 && s.length<=300 && /^[A-Za-z0-9+/=_-]+$/.test(s) && hostHint(decodeHidden(s)?.value||"");
   const eps=new EndpointCollector(), hostSites=new Set<string>(), libHidden=new Set<string>(), hiddenCallers=new Map<string,string>();
-  const stringRule=(s:string)=>trackedString(s) || (hostHint(s) || hiddenHost(s)) && Boolean(hostSites.add(s.slice(0,300)));
+  // Dead-drop URLs (paste/raw/export/share pages) are tracked too: their callers decide whether share pages count.
+  const dropHint=(s:string)=>s.length>=12 && s.length<=300 && s.includes("://") && ["raw","linked"].includes(deadDrop(s.trim()));
+  const stringRule=(s:string)=>trackedString(s) || (hostHint(s) || hiddenHost(s) || dropHint(s)) && Boolean(hostSites.add(s.slice(0,300)));
+  const cryptoFacts:CryptoFacts[]=[];
   const collect=(run:()=>void)=>{try{run();}catch(error){console.error("Kheronyx endpoint extraction failed:",error instanceof Error?error.message:error);}};
   if(tags)collect(()=>eps.add(tags!.filter(t=>t.tag==="meta-data" && t.attributes.value).map(t=>t.attributes.value),"manifest",{decode:true}));
   let dexBytes=0, failed=0;
   const scan=(name:string,data:Buffer)=>{
-    const t=Date.now(), d=parseDex(data,budget.deadline,t<codeDeadline?{code:{deadline:codeDeadline,ref:trackedRef,string:stringRule,library}}:undefined);
+    const t=Date.now(), d=parseDex(data,budget.deadline,t<codeDeadline?{code:{deadline:codeDeadline,ref:trackedRef,string:stringRule,library,crypto:true}}:undefined);
     bytecode.ms+=Date.now()-t; sig.refs(d.methods,d.code);sig.refs(d.fields,d.code);sig.classes(d.classes);sig.strings(d.strings);
     collect(()=>{const at=new Map((d.code?.strings||[]).map(x=>[x.ref,x])), site=(s:string)=>at.get(s.slice(0,300));eps.add(d.strings,/^classes\d*\.dex$/.test(name)?"dex":"payload",{callers:s=>site(s)?.app,library:s=>Boolean(d.code?.complete && site(s)?.lib.length && !site(s)!.app.length)});
       for(const x of d.code?.strings||[])if(hostSites.has(x.ref) && hiddenHost(x.ref)){const v=decodeHidden(x.ref)!.value;if(x.app.length)hiddenCallers.set(v,x.app[0]);else if(d.code!.complete && x.lib.length)libHidden.add(v);}});
+    if(d.code?.crypto && cryptoFacts.length<40)cryptoFacts.push(d.code.crypto);
     if(d.code){sig.sites({...d.code,strings:d.code.strings.filter(x=>!hostSites.has(x.ref))});bytecode.methods+=d.code.methods;bytecode.instructions+=d.code.units;if(!d.code.complete)bytecode.incomplete++;}else bytecode.incomplete++;
     for(const h of hiddenStrings(d.strings,revealable,60))sig.reveal(h);
     for(const c of d.classes)if(wanted.has(c.name))found.add(c.name);
@@ -290,8 +298,24 @@ function apkParse(buffer: Buffer, a: Artifact) {
     if(signing.errors.length)a.limitations.push("Sebagian data sertifikat penanda tangan APK tidak dapat dibaca.");
     if(signing.verification?.some(v=>/batas waktu/.test(v)))a.limitations.push("Digest isi APK tidak selesai diverifikasi karena batas waktu.");
   } catch {a.limitations.push("Sertifikat penanda tangan APK tidak berhasil dibaca.");}
+  // Encrypted C2 configs: decrypted with the key material the app itself carries (bounded attempts/time, see lib/config-decrypt.ts).
+  let decrypted:Decrypted[]=[], pendingCrypto=false;
+  collect(()=>{
+    if(!cryptoFacts.some(f=>f.classes.length))return;
+    const assets=entries.filter(e=>/^(?:assets|res\/raw)\/(?:[^/]+\/)*[^/]*(?:config|cfg|setting|conf|data)[^/]*$|^(?:assets|res\/raw)\/(?:[^/]+\/)*[^/]+\.(?:dat|bin|cfg|conf|enc|key)$/i.test(e.name) && e.size>=16 && e.size<=65536).slice(0,8).flatMap(e=>{try{return [{name:e.name.slice(0,80),bytes:unzipEntry(buffer,e,65536)}];}catch{return [];}});
+    const jobs=cryptoJobs(cryptoFacts,{pkg:m.package,assets}), r=decryptConfigs(jobs); decrypted=r.found;
+    // "Key not available" only when ciphertext sits in the decrypting method or is passed into it, nothing opened at all.
+    pendingCrypto=!decrypted.length && !r.opened && jobs.some(j=>j.algorithms.length && j.data.some(d=>(d.origin==="metode kripto" || d.origin==="argumen pemanggil") && d.bytes.length>=32));
+    a.metadata.cryptoScan={classes:cryptoFacts.reduce((n,f)=>n+f.classes.length,0),jobs:jobs.length,attempts:r.attempts,decrypted:decrypted.length,...r.opened?{openedOther:r.opened}:{},...r.timedOut?{timedOut:true}:{}};
+    for(const x of decrypted){sig.reveal({value:x.plaintext,technique:x.algorithm,where:x.via});eps.hidden([{value:x.plaintext,technique:x.algorithm,where:x.via}]);}
+  });
   let endpoints:Endpoint[]=[];
   collect(()=>{eps.hidden(sig.hidden.filter(h=>!libHidden.has(h.value) || hiddenCallers.has(h.value)).map(h=>({...h,where:h.where || hiddenCallers.get(h.value)})));endpoints=eps.finish({linked:netLinker(sig.codeClasses.get("net")),smtp:sig.apis.has("smtp")});});
+  if(decrypted.length){
+    const algos=new Set(decrypted.map(x=>`deobfuscated:${x.algorithm}`)), recovered=endpoints.filter(e=>algos.has(e.source));
+    a.metadata.decryptedConfig=decrypted.slice(0,6).map(x=>({algorithm:x.algorithm,via:x.via.slice(0,120),keySource:x.keySource.slice(0,80),plaintext:redactSecrets(x.plaintext).replace(/\s+/g," ").slice(0,200)}));
+    extra.push({id:"encrypted_config",name:"Konfigurasi server pelaku dienkripsi (berhasil dibuka)",severity:recovered.length?"high":"medium",evidence:[recovered.length?`alamat dipulihkan: ${recovered.slice(0,4).map(e=>e.value).join(", ")}`.slice(0,220):"",...decrypted.slice(0,4).map(x=>`${x.algorithm} di ${x.via} (kunci ${x.keySource}): ${redactSecrets(x.plaintext).replace(/\s+/g," ").slice(0,100)}`),"kunci dekripsi tertanam di aplikasi; konfigurasi dibuka statis tanpa menjalankan aplikasi"].filter(Boolean)});
+  } else if(pendingCrypto)a.limitations.push("Konfigurasi terenkripsi ditemukan tetapi kuncinya tidak tersedia secara statis; alamat server di dalamnya tidak dapat dipulihkan.");
   const behaviors=evaluate(sig,m,extra,{certSha256,certSubject,endpoints});
   a.metadata.behaviors=behaviorMetadata(behaviors); a.indicators.unshift(...behaviors.map(behaviorIndicator));
   const sites=sig.callSites(); if(sites.length)a.metadata.callSites=sites;
@@ -299,7 +323,7 @@ function apkParse(buffer: Buffer, a: Artifact) {
   const urls=sig.rankedUrls(), hosts=[...new Set(urls.slice(0,200).filter(u=>/telegram|discord|slack|ngrok|trycloudflare|webhook|pipedream|000webhost|:\/\/(?:\d{1,3}\.){3}\d{1,3}|\.php\b|firebaseio|firebasedatabase/i.test(u)).map(u=>u.split("/")[2]))].slice(0,8);
   if(endpoints.length)a.metadata.endpoints=endpoints;
   // Endpoint hosts (bare IPs, DDNS/tunnel hosts, panels) first so lib/threat-intel.ts looks them up.
-  const campaign={certSha256:certSha256?[certSha256]:[],telegramBots:[...sig.bots],chatIds:[...sig.chats],hosts:[...new Set([...endpointHosts(endpoints),...hosts])].slice(0,12)};
+  const campaign={certSha256:certSha256?[certSha256]:[],telegramBots:[...sig.bots],chatIds:[...sig.chats],hosts:[...new Set([...endpointHosts(endpoints),...hosts])].slice(0,12),deadDrops:deadDropUrls(endpoints)};
   if(Object.values(campaign).some(v=>v.length))a.metadata.campaign=campaign;
   a.metadata.dexFiles=[...stats,...skipped.map(name=>({name,skipped:true}))].slice(0,40);
   a.metadata.dexScan={parsed:stats.length,skipped:skipped.length,inflatedMB:Math.round((DEX_TOTAL-budget.bytes)/MB),ms:Date.now()-started,code:{...bytecode,complete:!bytecode.incomplete && !sig.codeGaps}};

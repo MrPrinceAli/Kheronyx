@@ -5,8 +5,13 @@ import { recoverable } from "./deobfuscate";
 export type DexClass = {name: string; superclass: string};
 export type CallSite = {ref: string; app: string[]; lib: string[]};
 export type Recovered = {value: string; technique: string; where: string; lib: boolean};
-export type DexCode = {complete: boolean; reason?: string; methods: number; units: number; sites: CallSite[]; strings: CallSite[]; recovered: Recovered[]};
-export type CodeOptions = {deadline: number; ref: (ref: string) => boolean; string: (s: string) => boolean; library?: (cls: string) => boolean};
+// Crypto context per app class (lib/config-decrypt.ts): javax.crypto/MessageDigest use, hand-rolled RC4/XOR loops, the
+// const-strings and byte arrays near them, strings passed into the class, and ciphertext-shaped strings app-wide.
+export type CryptoClass = {name: string; apis: string[]; loops: string[]; site: string[]; strings: string[]; arrays: number[][]; methods: string[]};
+// passed: string arguments of calls into app methods (call = one invoke, so co-arguments such as decrypt(data, key) pair up).
+export type CryptoFacts = {classes: CryptoClass[]; passed: {value: string; to: string; from: string; call: number}[]; pool: {value: string; where: string}[]};
+export type DexCode = {complete: boolean; reason?: string; methods: number; units: number; sites: CallSite[]; strings: CallSite[]; recovered: Recovered[]; crypto?: CryptoFacts};
+export type CodeOptions = {deadline: number; ref: (ref: string) => boolean; string: (s: string) => boolean; library?: (cls: string) => boolean; crypto?: boolean};
 export type Dex = {version: string; strings: string[]; types: string[]; methods: string[]; fields: string[]; classes: DexClass[]; code?: DexCode};
 const NO_INDEX = 0xffffffff, MAX_STRING = 4096, MAX_IDS = 65536, MAX_STRINGS = 1_000_000;
 const fail = (message: string): never => {throw new Error(message);};
@@ -64,7 +69,7 @@ const LIBRARY = new RegExp(`^L(?:${[
   "org/(?:apache|json|jetbrains|intellij|chromium|bouncycastle|conscrypt|greenrobot|reactivestreams|slf4j|xmlpull|w3c|kxml2|java_websocket|jsoup|joda|threeten)/",
   "io/(?:reactivex|flutter|sentry|grpc|realm|branch|fabric|perfmark|ktor|invertase|github/inflationx)/",
   "com/(?:facebook|squareup|bumptech|airbnb|fasterxml|crashlytics|unity3d|applovin|ironsource|mopub|inmobi|vungle|chartboost|adcolony|bytedance/sdk|pgl|startapp|appsflyer|adjust|onesignal|huawei/hms|amazon|microsoft|jakewharton|umeng|alibaba|alipay|xiaomi/push|mbridge|my/target|yandex|smaato|fyber|tapjoy|kochava|mixpanel|amplitude|segment|clevertap|moengage|braze|appboy|zendesk|stripe|paypal|midtrans|xendit|journeyapps|scottyab|orhanobut|blankj|loopj|koushikdutta|nimbusds|auth0|nostra13|afollestad|android/volley|android/installreferrer|android/billingclient|tencent/(?:bugly|mm/opensdk|smtt)|reactnativecommunity|swmansion|th3rdwave|horcrux|oblador|dylanvann)/",
-  "cn/(?:jpush|jiguang)/", "net/(?:sqlcipher|zetetic)/",
+  "cn/(?:jpush|jiguang)/", "net/(?:sqlcipher|zetetic)/", "sg/bigo/ads/",
 ].join("|")})`);
 export const libraryClass = (descriptor: string) => LIBRARY.test(descriptor);
 // Code units per opcode from the Dalvik instruction-format table (0 = unused/invalid), and which register an op
@@ -85,6 +90,19 @@ const SPECIAL: Record<string, number> = {"Ljava/lang/String;-><init>": 1, "Ljava
 type Arr = {a: number[]; w: number; src: string; done?: boolean};
 type Val = {s: string} | {n: number} | Arr | {sb: string[]; ok: boolean};
 const MAX_SITES = 4000, MAX_RECOVERED = 1500, MAX_ARRAY = 4096;
+// Crypto APIs (method refs without signature) -> short label; "loop" counters spot hand-rolled RC4/XOR.
+const CRYPTO: Record<string, string> = {"Ljavax/crypto/Cipher;->getInstance": "Cipher", "Ljavax/crypto/Cipher;->init": "Cipher", "Ljavax/crypto/Cipher;->doFinal": "Cipher", "Ljavax/crypto/spec/SecretKeySpec;-><init>": "SecretKeySpec", "Ljavax/crypto/spec/IvParameterSpec;-><init>": "IvParameterSpec", "Ljavax/crypto/spec/GCMParameterSpec;-><init>": "IvParameterSpec", "Ljavax/crypto/spec/DESKeySpec;-><init>": "SecretKeySpec", "Ljavax/crypto/spec/DESedeKeySpec;-><init>": "SecretKeySpec", "Ljava/security/MessageDigest;->getInstance": "MessageDigest", "Ljava/security/MessageDigest;->digest": "MessageDigest"};
+const CHARS = new Set(["Ljava/lang/String;->charAt", "Ljava/lang/String;->length", "Ljava/lang/String;->getBytes", "Ljava/lang/String;->toCharArray"]);
+const MAX_PASSED = 6000, MAX_POOL = 300, MAX_FIELDS = 20000, CLASS_STRINGS = 160, CLASS_ARRAYS = 16, ARRAY_BYTES = 1024, ARRAY_BUDGET = 1 << 18;
+// Ciphertext-shaped const-string (base64/hex of >= 16 bytes that is not readable text once decoded).
+export function cipherShaped(s: string) {
+  if (s.length < 24 || s.length > 8192) return false;
+  if (/^(?:[0-9a-fA-F]{2}){16,}$/.test(s)) return !/^[0-9]+$/.test(s);
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(s) || /^[A-Za-z]+$|^[a-z0-9_]+$|^[A-Z0-9_]+$/.test(s) || s.length % 4 === 1) return false;
+  const d = Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64"); let printable = 0;
+  for (const c of d) if (c >= 0x20 && c < 0x7f || c === 10 || c === 13) printable++;
+  return d.length >= 16 && printable < d.length * 0.85;
+}
 // Linear walk over every code_item (no control flow): invoke-* (35c/3rc), sget/sput, const-string(/jumbo), plus tiny
 // constant tracking for new-array/fill-array-data/aput, new String(...), StringBuilder chains and xor keys. Bounded by
 // the deadline, a code-unit budget proportional to the file size, and caps on recorded sites/strings.
@@ -109,6 +127,11 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
   const num = (r: number) => {const v = get(r); return v && "n" in v ? v.n : undefined;};
   const arrText = (x: Arr, key = 0) => x.w === 1 ? Buffer.from(x.a.map(c => (c ^ key) & 0xff)).toString("latin1") : String.fromCharCode(...x.a.map(c => c & 0xffff));
   let unitBudget = b.length + 65536, itemBudget = b.length + 65536, stop = "";
+  // Crypto context (opt-in): per-class buffers reset for every class_def; library classes are skipped.
+  const cr = o.crypto ? {facts: {classes: [], passed: [], pool: []} as CryptoFacts, api: new Uint8Array(nm), chars: new Uint8Array(nm), app: new Uint8Array(nm), shape: new Uint8Array(strings.length), fieldStr: new Map<number, string>(), fieldsOf: new Map<CryptoClass, Set<number>>()} : undefined;
+  if (cr) for (let i = 0; i < nm; i++) {const r = methods[i], k = r.indexOf(";->"); if (CRYPTO[r]) cr.api[i] = 1; if (CHARS.has(r)) cr.chars[i] = 1; if (!r.startsWith("Landroid/") && !isLib(r.slice(0, k + 1))) cr.app[i] = 1;}
+  type Cls = {apis: Set<string>; loops: Set<string>; site: string[]; strings: string[]; arrays: number[][]; methods: Set<number>; fields: Set<number>; xor: number; rem: number; n256: number; arr: number; n: number};
+  let cc: Cls | undefined, calls = 0, arrayBudget = ARRAY_BUDGET;
   const uleb = (st: {p: number}) => {let r = 0; for (let s = 0; ; s += 7) {if (s > 28 || st.p >= b.length) fail("uleb128 rusak."); const x = b[st.p++]; r += (x & 0x7f) * 2 ** s; if (!(x & 0x80)) return r;}};
   const method = (caller: number, off: number, lib: boolean) => {
     if (off & 3 || off < header || off + 16 > b.length) {out.complete = false; return;}
@@ -117,6 +140,8 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
     if ((unitBudget -= n) < 0) {stop = "batas instruksi"; return;}
     out.methods++; out.units += n; g = g + 1 >>> 0 || 1;
     let pending: Val | undefined; const keys: number[] = [], arrays: Arr[] = [];
+    // Per-method crypto counters (only for app classes when collecting crypto context).
+    const cm = cr && cc && !lib ? {api: false, str: [] as string[], fields: [] as number[], xor: 0, rem: 0, n256: 0, arr: 0, chars: 0} : undefined;
     for (let pc = 0; pc < n;) {
       const p = base + pc * 2, x = b[p], a = b[p + 1]; let w = WIDTH[x];
       if (x === 0 && a) {
@@ -127,18 +152,23 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
       if (!w || pc + w > n) {out.complete = false; return;}
       switch (x) {
         case 0x12: set(a & 15, {n: a << 24 >> 28}); break;
-        case 0x13: set(a, {n: b.readInt16LE(p + 2)}); break;
+        case 0x13: set(a, {n: b.readInt16LE(p + 2)}); if (cm && b.readInt16LE(p + 2) === 256) cm.n256++; break;
         case 0x14: set(a, {n: b.readInt32LE(p + 2)}); break;
         case 0x15: set(a, {n: b.readInt16LE(p + 2) * 65536}); break;
         case 0x1a: case 0x1b: {
           const i = x === 0x1a ? b.readUInt16LE(p + 2) : b.readUInt32LE(p + 2); if (i >= strings.length) {set(a, undefined); break;}
           if (!strState[i]) strState[i] = o.string(strings[i]) ? 1 : 2;
           if (strState[i] === 1) site(strSites, i, caller, lib);
+          if (cm) {
+            const s = strings[i]; if (cm.str.length < 48 && s.length <= 8192) cm.str.push(s);
+            if (!cr!.shape[i]) cr!.shape[i] = cipherShaped(s) ? 1 : 2;
+            if (cr!.shape[i] === 1 && cr!.facts.pool.length < MAX_POOL && !cr!.facts.pool.some(p => p.value === s)) cr!.facts.pool.push({value: s, where: methods[caller]});
+          }
           set(a, {s: strings[i]}); break;
         }
         case 0x22: {const t = types[b.readUInt16LE(p + 2)]; set(a, t === "Ljava/lang/StringBuilder;" || t === "Ljava/lang/StringBuffer;" ? {sb: [], ok: true} : undefined); break;}
         case 0x23: {
-          const t = types[b.readUInt16LE(p + 2)], size = num(a >> 4);
+          const t = types[b.readUInt16LE(p + 2)], size = num(a >> 4); if (cm && size === 256) cm.n256++;
           if ((t === "[B" || t === "[C") && size !== undefined && size > 0 && size <= MAX_ARRAY && arrays.length < 32) {const arr: Arr = {a: new Array(size).fill(0), w: t === "[B" ? 1 : 2, src: "aput"}; arrays.push(arr); set(a & 15, arr);}
           else set(a & 15, undefined);
           break;
@@ -161,18 +191,36 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
         case 0x07: set(a & 15, get(a >> 4)); break;
         case 0x08: set(a, get(b.readUInt16LE(p + 2))); break;
         case 0x0c: set(a, pending); pending = undefined; break;
-        case 0xdf: if (keys.length < 8) keys.push(b[p + 3]); set(a, undefined); break;
-        case 0xd7: if (keys.length < 8) keys.push(b[p + 2]); set(a & 15, undefined); break;
-        case 0x97: {const k = num(b[p + 3]) ?? num(b[p + 2]); if (k !== undefined && keys.length < 8) keys.push(k & 0xff); set(a, undefined); break;}
-        case 0xb7: {const k = num(a >> 4); if (k !== undefined && keys.length < 8) keys.push(k & 0xff); set(a & 15, undefined); break;}
+        case 0xdf: if (cm) cm.xor++; if (keys.length < 8) keys.push(b[p + 3]); set(a, undefined); break;
+        case 0xd7: if (cm) cm.xor++; if (keys.length < 8) keys.push(b[p + 2]); set(a & 15, undefined); break;
+        case 0x97: {if (cm) cm.xor++; const k = num(b[p + 3]) ?? num(b[p + 2]); if (k !== undefined && keys.length < 8) keys.push(k & 0xff); set(a, undefined); break;}
+        case 0xb7: {if (cm) cm.xor++; const k = num(a >> 4); if (k !== undefined && keys.length < 8) keys.push(k & 0xff); set(a & 15, undefined); break;}
         default:
-          if (x >= 0x60 && x <= 0x6d) {const f = b.readUInt16LE(p + 2); if (f < nf && fieldTracked[f]) site(sites, fields[f], caller, lib);}
+          if (cm) {
+            if (x === 0x94 || x === 0xb4 || x === 0xdc || x === 0xd4 && b.readInt16LE(p + 2) === 256) cm.rem++;
+            if (x === 0xd5 && b.readInt16LE(p + 2) === 255) cm.n256++;
+            if (x >= 0x44 && x <= 0x51) cm.arr++;
+          }
+          if (x >= 0x60 && x <= 0x6d) {
+            const f = b.readUInt16LE(p + 2); if (f < nf && fieldTracked[f]) site(sites, fields[f], caller, lib);
+            // Static String fields: sput-object of a const-string is remembered, sget-object reads it back (class constants).
+            if (cr && f < nf) {
+              if (x === 0x69) {const v = get(a); if (v && "s" in v && v.s.length <= 8192 && cr.fieldStr.size < MAX_FIELDS) cr.fieldStr.set(f, v.s);}
+              else if (x === 0x62) {const v = cr.fieldStr.get(f); if (cm && cm.fields.length < 16) cm.fields.push(f); set(a, v !== undefined ? {s: v} : undefined); break;}
+            }
+          }
           if (x >= 0x6e && x <= 0x78 && x !== 0x73) {
             const m = b.readUInt16LE(p + 2); pending = undefined; if (m >= nm) break;
             if (tracked[m]) site(sites, methods[m], caller, lib);
-            const kind = special[m]; if (!kind) break;
             const range = x >= 0x74, count = range ? a : a >> 4, first = b.readUInt16LE(p + 4);
             const reg = (k: number) => range ? first + k : k < 4 ? b[p + 4 + (k >> 1)] >> (k & 1) * 4 & 15 : a & 15;
+            if (cm) {
+              if (cr!.api[m]) {cm.api = true; cc!.apis.add(CRYPTO[methods[m]]);}
+              if (cr!.chars[m]) cm.chars++;
+              // Strings handed to app methods (resolved later against the crypto classes: keys and ciphertexts at call sites).
+              if (cr!.app[m] && m !== caller) {const call = ++calls; for (let k = 0; k < count && k < 5; k++) {const v = get(reg(k)); if (v && "s" in v && v.s.length >= 4 && v.s.length <= 8192 && cr!.facts.passed.length < MAX_PASSED) cr!.facts.passed.push({value: v.s, to: methods[m], from: methods[caller], call});}}
+            }
+            const kind = special[m]; if (!kind) break;
             if (count < 1) break;
             const v0 = get(reg(0)), v1 = count > 1 ? get(reg(1)) : undefined;
             if (kind === 1 && v1 && "a" in v1) {const s = arrText(v1); if (recoverable(s)) {v1.done = true; recover(s, `array ${v1.w === 1 ? "byte" : "char"} (${v1.src})`, caller, lib);} set(reg(0), {s});}
@@ -190,6 +238,16 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
           }
       }
       pc += w;
+    }
+    if (cm) {
+      const c = cc!; for (const s of cm.str) if (c.strings.length < CLASS_STRINGS && !c.strings.includes(s)) c.strings.push(s);
+      for (const arr of arrays) if (arr.w === 1 && arr.a.length >= 5 && arr.a.length <= ARRAY_BYTES && c.arrays.length < CLASS_ARRAYS && (arrayBudget -= arr.a.length) > 0 && arr.a.some(Boolean)) c.arrays.push(arr.a.map(v => v & 0xff));
+      for (const f of cm.fields) c.fields.add(f);
+      c.xor += cm.xor; c.rem += cm.rem; c.n256 += cm.n256; c.arr += cm.arr; c.n++;
+      // Hand-rolled ciphers: an XOR with an index modulo the key length (String/char/byte key), or RC4 (256-entry state).
+      const rc4 = cm.xor > 0 && cm.n256 > 0 && cm.arr >= 6, xor = cm.xor > 0 && cm.rem > 0 && (cm.chars > 0 || cm.arr >= 2) && !cm.n256;
+      if (rc4) c.loops.add("rc4"); if (xor) c.loops.add("xor");
+      if (cm.api || rc4 || xor) {c.methods.add(caller); for (const s of cm.str) if (c.site.length < 64 && !c.site.includes(s)) c.site.push(s);}
     }
     // Arrays never turned into readable text directly: plain literal text, or single-byte XOR with a key seen in
     // this method (xor-int/lit*) or implied by an "http" prefix.
@@ -211,6 +269,7 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
       const q = oc + ci * 32, data = b.readUInt32LE(q + 24); if (!data) continue;
       if (data < header || data >= b.length) {out.complete = false; continue;}
       const lib = isLib(classes[ci].name), st = {p: data};
+      cc = cr && !lib ? {apis: new Set(), loops: new Set(), site: [], strings: [], arrays: [], methods: new Set(), fields: new Set(), xor: 0, rem: 0, n256: 0, arr: 0, n: 0} : undefined;
       try {
         const sf = uleb(st), inf = uleb(st), dm = uleb(st), vm = uleb(st);
         if ((itemBudget -= sf + inf + dm + vm) < 0 || (sf + inf) * 2 + (dm + vm) * 3 > b.length - st.p) {out.complete = false; if (itemBudget < 0) stop = "batas struktur"; continue;}
@@ -225,8 +284,23 @@ function decodeCode(b: Buffer, header: number, dex: Dex, oc: number, o: CodeOpti
           }
         }
       } catch {out.complete = false;}
+      if (cc && cr && cr.facts.classes.length < 400) {
+        // RC4 key schedule and keystream often sit in separate methods of one class.
+        if (!cc.loops.has("rc4") && cc.n <= 8 && cc.xor > 0 && cc.n256 > 0 && cc.arr >= 8 && cc.rem > 0 && cc.strings.length <= 40) cc.loops.add("rc4");
+        if (cc.apis.has("Cipher") || cc.apis.has("SecretKeySpec") || cc.loops.size) {
+          const k: CryptoClass = {name: classes[ci].name, apis: [...cc.apis], loops: [...cc.loops], site: cc.site, strings: cc.strings, arrays: cc.arrays, methods: [...cc.methods].map(i => methods[i])};
+          cr.facts.classes.push(k); if (cc.fields.size) cr.fieldsOf.set(k, cc.fields);
+        }
+      }
     }
   } catch {out.complete = false;}
+  if (cr) {
+    // Class constants read via sget-object; passed strings only kept when they flow into a crypto class.
+    for (const [k, fs] of cr.fieldsOf) for (const f of fs) {const v = cr.fieldStr.get(f); if (v !== undefined && k.strings.length < CLASS_STRINGS + 16 && !k.strings.includes(v)) k.strings.push(v);}
+    const names = new Set(cr.facts.classes.map(c => c.name));
+    cr.facts.passed = cr.facts.passed.filter(x => names.has(x.to.slice(0, x.to.indexOf(";->") + 1))).slice(0, 1500);
+    out.crypto = cr.facts;
+  }
   if (stop) {out.complete = false; out.reason = stop;}
   // No decodable code at all (stub/table-only DEX): callers stay unknown rather than "never called".
   if (!out.methods) {out.complete = false; out.reason ||= "tanpa kode";}

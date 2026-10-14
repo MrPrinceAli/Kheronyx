@@ -6,9 +6,12 @@ import { hostOf, registrableDomain } from "@/lib/hosts";
 import panel from "./virus-total.module.css";
 import styles from "./trace.module.css";
 
-const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", url: "URL", email: "Email"};
+const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", deaddrop: "Sumber konfigurasi jarak jauh (dead drop)", url: "URL", email: "Email"};
 // Labels when the file is judged malicious; neutral wording otherwise, so legitimate developers are never called attackers.
-const TAG: Record<string, string> = {telegram: "BOT PELAKU", email: "EMAIL PELAKU", url: "URL TERKAIT"};
+const TAG: Record<string, string> = {telegram: "BOT PELAKU", email: "EMAIL PELAKU", deaddrop: "SUMBER KONFIG PELAKU", url: "URL TERKAIT"};
+const SUSPECT_KIND: Record<string, string> = {deaddrop: "Sumber konfigurasi pelaku (dead drop)"};
+type Config = {algorithm: string; via: string; keySource: string; plaintext: string};
+const config = (v: unknown): v is Config => Boolean(v) && ["algorithm", "via", "keySource", "plaintext"].every(k => typeof (v as Record<string, unknown>)[k] === "string");
 const SOURCE: Record<string, string> = {dex: "kode aplikasi", payload: "kode tersembunyi (payload)", resources: "resource", manifest: "manifest", exe: "isi program", dotnet: "string .NET"};
 const where = (s: string) => s.startsWith("deobfuscated:") ? `disembunyikan (${s.slice(13)})` : s.startsWith("native:") ? `kode native (${s.slice(7)})` : SOURCE[s] || s;
 const concealed = (e: Endpoint) => e.source.startsWith("deobfuscated:");
@@ -40,6 +43,7 @@ export function EndpointPanel({report}: {report: Report}) {
   const [showAll, setShowAll] = useState(false), [showOthers, setShowOthers] = useState(false);
   const m = report.artifact.metadata as Record<string, unknown>, intel = report.artifact.threatIntel;
   const list = Array.isArray(m.endpoints) ? m.endpoints.filter(valid).slice(0, 25) : [];
+  const configs = Array.isArray(m.decryptedConfig) ? m.decryptedConfig.filter(config).slice(0, 6) : [];
   const campaign = (m.campaign ?? {}) as Record<string, unknown>, bots = strings(campaign.telegramBots), chats = strings(campaign.chatIds);
   const cert = (m.signing as {certificates?: {subject?: string; sha256?: string; validFrom?: string}[]} | undefined)?.certificates?.[0];
   const signer = (m.authenticode as {signer?: string} | undefined)?.signer;
@@ -47,12 +51,13 @@ export function EndpointPanel({report}: {report: Report}) {
   const family = intel?.malwareBazaar?.family || intel?.threatfox.find(t => t.family)?.family || intel?.malwareBazaar?.tags.find(t => !/^(?:apk|exe|pdf|signed|unsigned|dropped|32|64|elf)$/i.test(t));
   const hits = Boolean(intel?.malwareBazaar) || Boolean(intel?.urlhaus.length) || Boolean(intel?.threatfox.length);
   const suspect = report.assessment.risk === "high" || report.assessment.risk === "critical" || hits;
-  if (!list.length && !(suspect && (cert || signer || bots.length || chats.length))) return null;
+  if (!list.length && !configs.length && !(suspect && (cert || signer || bots.length || chats.length))) return null;
 
   const notes = (e: Endpoint) => {
     if (!intel) return [];
     const out: string[] = [], domain = registrableDomain(e.host), d = domain ? intel.domains.find(x => x.domain === domain) : undefined;
-    if (intel.urlhaus.some(u => (u.kind === "host" ? u.target : hostOf(u.target)) === e.host)) out.push("tercatat URLhaus");
+    // A URL hit on a shared dead-drop platform (pastebin, Drive...) only marks that exact document.
+    if (intel.urlhaus.some(u => u.kind === "url" && e.kind === "deaddrop" ? u.target === e.value : (u.kind === "host" ? u.target : hostOf(u.target)) === e.host)) out.push("tercatat URLhaus");
     const fox = intel.threatfox.find(t => t.term === e.host); if (fox) out.push(`tercatat ThreatFox${fox.family ? ` (${fox.family})` : ""}`);
     if (d?.ageDays !== undefined) out.push(d.ageDays < 180 ? `domain baru: berumur ${d.ageDays} hari${d.registrar ? `, registrar ${d.registrar}` : ""}` : `domain lama (${Math.round(d.ageDays / 365)} tahun)`);
     return out;
@@ -82,14 +87,17 @@ export function EndpointPanel({report}: {report: Report}) {
     </div>}
     {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{(showAll ? servers : servers.slice(0, VISIBLE)).map(e => {
       const n = notes(e);
-      return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : "SERVER"} danger={suspect} label={`${KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
+      return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : e.kind === "deaddrop" ? "SUMBER KONFIG" : "SERVER"} danger={suspect} label={`${(suspect && SUSPECT_KIND[e.kind]) || KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
     })}
       {servers.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({servers.length})<ChevronDown size={13}/></>}</button>}
+    </div>}
+    {!!configs.length && <div className={styles.group}><h4>Konfigurasi terenkripsi yang berhasil dibuka<span className={styles.count}>{configs.length}</span></h4>
+      {configs.map(c => <Row key={`${c.via}:${c.plaintext}`} tag={`DIDEKRIPSI (${c.algorithm.toUpperCase()})`} danger={suspect} label={`Dibuka dengan kunci yang tertanam di ${app} (${c.keySource}) · ${c.via}`} value={c.plaintext}/>)}
     </div>}
     {!!others.length && <div className={styles.group}>
       <button type="button" className={styles.more} aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>URL lain di dalam file ({others.length}){showOthers ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}</button>
       {showOthers && <><p className={styles.hint}>Alamat yang tertulis di dalam file tetapi tidak menunjukkan tanda server pelaku, misalnya situs dokumentasi atau layanan umum.</p>{others.map(e => <Row key={e.value} tag="URL TERKAIT" label={`URL · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={notes(e).join(" · ") || undefined}/>)}</>}
     </div>}
-    <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya</span><span>Alamat yang diunduh atau didekripsi saat {app} berjalan tidak terlihat</span></div>
+    <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya</span><span>{configs.length ? `Konfigurasi terenkripsi dibuka statis dengan kunci bawaan ${app}; alamat yang diunduh saat berjalan tidak terlihat` : `Alamat yang diunduh atau didekripsi saat ${app} berjalan tidak terlihat`}</span></div>
   </section>;
 }

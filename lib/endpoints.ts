@@ -1,11 +1,12 @@
 import { member, redactSecrets, sourceLabel } from "./behaviors";
 import { decodeHidden } from "./deobfuscate";
-import { BENIGN, DDNS_HINT, DDNS_HOST, DOMAIN, SHARED, customerHost, ipv4, publicHost, publicIpv4, under, validPort, zoneOf } from "./hosts";
+import { BENIGN, DDNS_HINT, DDNS_HOST, DOMAIN, SHARED, customerHost, deadDrop, ipv4, publicHost, publicIpv4, under, validPort, zoneOf } from "./hosts";
 // C2/exfiltration endpoints from candidate strings (DEX/payload strings, deobfuscated values, native .so strings,
 // resources.arsc, manifest meta-data, EXE ASCII/UTF-16 and .NET user strings). Strings are only pattern-matched; no
 // address is ever resolved or contacted. Bare IPs need context (port, URL, deobfuscation, native code or a link to
 // network code) so resolvers, OIDs and version numbers are not reported.
-export type EndpointKind = "panel" | "telegram" | "webhook" | "firebase" | "ip" | "ddns" | "tunnel" | "url" | "email";
+// deaddrop: public service hosting the C2 address (paste/raw/export document), label "Sumber konfigurasi pelaku (dead drop)".
+export type EndpointKind = "panel" | "telegram" | "webhook" | "firebase" | "ip" | "ddns" | "tunnel" | "deaddrop" | "url" | "email";
 // source: dex | payload | resources | manifest | exe | dotnet | native:<lib> | deobfuscated:<technique>
 export type Endpoint = {value: string; host: string; port?: number; kind: EndpointKind; source: string; via?: string};
 type Raw = {text: string; source: string; context: boolean; via?: string; callers?: string[]};
@@ -31,8 +32,8 @@ const FIREBASE = ["firebaseio.com", "firebasedatabase.app", "cloudfunctions.net"
 const IDENTIFIER = /^(?:crl\d*|ocsp\d*|cacerts?|certs?)\./i, IDENTIFIER_PATH = /\.(?:crl|crt|cer|der|p7c)\d?$|\/experiments\/|\/rtp-hdrext\//i;
 const QUIET = ["webrtc.org", "crbug.com", "chromium.org", "globalsign.net", "globalsign.com", "public-trust.com", "digicert.com", "sectigo.com", "usertrust.com", "entrust.net", "letsencrypt.org", "lencr.org", "identrust.com", "godaddy.com", "starfieldtech.com", "comodoca.com", "verisign.com", "symcb.com", "symcd.com", "thawte.com", "geotrust.com", "pki.goog", "amazontrust.com", "quovadisglobal.com", "certum.pl", "buypass.no", "swisssign.net", "schemas.android.com", "googlesource.com", "googletagmanager.com", "gravatar.com", "jquery.com", "bootstrapcdn.com", "unpkg.com", "akamaihd.net", "akamai.net", "branch.io", "app.link", "appsflyer.com", "adjust.com", "onesignal.com", "sentry.io", "amplitude.com", "mixpanel.com", "facebook.net", "fb.com", "fb.me", "openstreetmap.org", "mapbox.com", "bing.com", "baidu.com", "qq.com", "umeng.com", "xiaomi.com", "huawei.com", "hicloud.com", "samsung.com", "stackoverflow.com", "sourceforge.net", "gnu.org", "opensource.org", "creativecommons.org", "json.org", "ietf.org", "iana.org", "openssl.org", "curl.se", "haxx.se", "sqlite.org", "zlib.net", "libpng.org", "fontawesome.com", "gradle.org", "kotlinlang.org", "jetbrains.com", "oracle.com", "java.com", "sun.com", "ns.adobe.com", "xmlsoap.org", "openxmlformats.org", "firebase.com", "go.dev", "golang.org", "tempuri.org", "whatwg.org", "g.co", "eclipse.org", "netty.io", "slf4j.org", "jivesoftware.com", "semrush.com", "ip-api.com", "ipinfo.io", "ip.sb", "dyn.com", "noip.com", "no-ip.com", "dynu.com", "ngrok.com", "afraid.org", "changeip.com", "dynv6.com", "duckdns.com", "playit.gg", "localxpose.io", "yandex.ru", "yandex.net", "yandex.com", "localhost"];
 const MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "office365.com", "aol.com", "icloud.com", "yandex.ru", "yandex.com", "mail.ru", "zoho.com", "gmx.com", "gmx.net", "protonmail.com", "proton.me"];
-const BASE: Record<EndpointKind, number> = {telegram: 1, ddns: 1, ip: 2, webhook: 2, tunnel: 2, panel: 3, email: 4, firebase: 5, url: 6};
-const CAPS: Partial<Record<EndpointKind, number>> = {url: 8, panel: 10, firebase: 4, email: 4};
+const BASE: Record<EndpointKind, number> = {telegram: 1, ddns: 1, ip: 2, webhook: 2, tunnel: 2, panel: 3, deaddrop: 3, email: 4, firebase: 5, url: 6};
+const CAPS: Partial<Record<EndpointKind, number>> = {url: 8, panel: 10, deaddrop: 6, firebase: 4, email: 4};
 // Only deliberate obfuscation is strong context. Native libraries are full of dotted version numbers ("6.7.8.5" in libvlc),
 // so their bare IPs need a port or URL like any other string.
 const hidden = (source: string) => source.startsWith("deobfuscated");
@@ -95,6 +96,13 @@ function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored
     const scheme = p[1].toLowerCase(), host = p[2].toLowerCase().replace(/\.$/, ""), port = p[3] && validPort(p[3]) ? Number(p[3]) : undefined, path = redactSecrets(p[4] || ""), value = `${scheme}://${host}${port ? `:${port}` : ""}${path.slice(0, 100)}${p[5] ? "?…" : ""}`;
     if (p[3] && !port) continue;
     if (ipv4(host)) {if (publicIpv4(host)) push("ip", value, host, port); continue;}
+    // Dead drops sit on shared/benign platforms (GitHub, Google Docs/Drive, Telegram...), so they are matched before those
+    // filters: raw/paste/export documents always, share pages only when hidden or loaded by network code, social links only hidden.
+    const drop = deadDrop(m[0].replace(/[).,;:'"\]]+$/, ""));
+    if (drop && (drop === "raw" || strong || drop === "linked" && Boolean(r.callers?.some(linked)))) {
+      const query = p[5] && p[5].length <= 120 && /^\?[\w=&.%-]+$/.test(p[5]) && !/token|key|secret|sig|auth|pass|session/i.test(p[5]) ? p[5] : p[5] ? "?…" : "";
+      push("deaddrop", `${scheme}://${host}${port ? `:${port}` : ""}${path.slice(0, 100)}${query}`, host, port); continue;
+    }
     if (!plausible(host)) continue;
     // Bot API on api.telegram.org, or relayed through the attacker's own proxy (e.g. a workers.dev "/bot<token>/sendMessage").
     if (host === "api.telegram.org" || /^\/bot[^/]*\/(?:send\w+|getUpdates|getMe|setWebhook|getFile|forwardMessage)\b/i.test(path)) {push("telegram", value, host, port); continue;}

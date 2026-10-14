@@ -55,3 +55,35 @@ export function endpointOnly(s: string) {
   const m = s.match(/^((?:\d{1,3}\.){3}\d{1,3})(?::(\d{1,5}))?$/); if (m) return publicIpv4(m[1]) && (m[2] === undefined || validPort(m[2])) && (Boolean(m[2]) || Number(m[1].split(".")[0]) > 2);
   const h = s.match(/^([a-z0-9.-]+\.[a-z]{2,63}):(\d{1,5})$/i); return Boolean(h) && DOMAIN.test(h![1].toLowerCase()) && validPort(h![2]);
 }
+// Dead-drop resolvers: public services where the operator publishes the real C2 address, fetched at runtime (paste sites,
+// raw files on code hosts, Telegram channel previews, exported Google Docs/Drive/Dropbox files, Firebase Remote Config/
+// Firestore documents, Steam profiles, IPFS, raw text on serverless tenants). "raw": the URL itself is a raw/paste/export
+// document; "linked": a share page that only counts when hidden or loaded by networking code; "hidden": a social/channel
+// link that only counts when deliberately hidden (support pages link to these all the time); "" = not a dead drop.
+const PASTE = ["pastebin.com", "pastebin.pl", "paste.ee", "rentry.co", "rentry.org", "hastebin.com", "hastebin.skyra.pw", "ghostbin.com", "ghostbin.co", "justpaste.it", "controlc.com", "textbin.net", "paste.rs", "dpaste.org", "dpaste.com", "pastes.io", "paste.gg", "privatebin.net", "katb.in", "termbin.com", "pastecode.io", "paste2.org", "ideone.com"];
+const SERVERLESS = ["onrender.com", "vercel.app", "netlify.app", "workers.dev", "pages.dev", "glitch.me", "herokuapp.com", "000webhostapp.com", "github.io", "web.app", "firebaseapp.com", "repl.co"];
+const PASTE_PAGES = /^\/(?:api|login|signup|register|faq|tools|about|contact|doc_\w*|pro|trends|archive|languages|settings|privacy|terms|help|static|assets|blog|users?|u|search|night_mode|messages|alerts|dmca|cookies|mobile|apps?)(?:[/.?#]|$)/i;
+export const DEADDROP_HINT = /pastebin|paste\.(?:ee|rs|gg)|rentry\.|hastebin|ghostbin|justpaste|controlc\.com|textbin|privatebin|dpaste|pastes\.io|pastecode|githubusercontent|github\.com\/[^/\s]+\/[^/\s]+\/raw\/|gitlab\.com\/.*raw|bitbucket\.org\/.*\/raw\/|(?:t|telegram)\.me\/|docs\.google\.com\/(?:document|spreadsheets|presentation)|drive\.(?:usercontent\.)?google\.com\/(?:uc|download|file)|dropbox(?:usercontent)?\.com|firebaseremoteconfig|firestore\.googleapis|steamcommunity\.com\/(?:profiles|id)\/|\/ipfs\/|\.ipfs\.|youtube\.com\/|youtu\.be\/|(?:twitter|x)\.com\/|onrender\.com|vercel\.app|netlify\.app|workers\.dev|pages\.dev|glitch\.me|herokuapp\.com|000webhostapp|github\.io|\.web\.app|firebaseapp\.com|repl\.co/i;
+export function deadDrop(url: string): "" | "raw" | "linked" | "hidden" {
+  const m = url.match(/^(?:https?):\/\/([^/?#:\s]+)(?::\d{1,5})?([^?#\s]*)(\?[^#\s]*)?/i); if (!m || !DEADDROP_HINT.test(url)) return "";
+  const host = m[1].toLowerCase().replace(/\.$/, "").replace(/^www\./, ""), path = m[2] || "", q = m[3] || "";
+  // Media, licences and docs on raw hosts are content, not a config ("…/res/mipmap/ic_app.png", "…/master/LICENSE").
+  if (!DOMAIN.test(host) || /\.(?:png|jpe?g|gif|svg|webp|ico|bmp|mp[34]|ogg|wav|pdf|md|html?|css|woff2?|ttf)$|\/(?:LICEN[SC]E|COPYING|README|NOTICE|CHANGELOG)(?:\.\w+)?$/i.test(path)) return "";
+  if (under(host, PASTE)) return /^\/(?:raw\/|raw\.php|dl\/|r\/|p\/|plain\/|documents\/|paste\/|download\/)?[\w-]{4,}(?:\.\w{1,5})?(?:\/raw)?\/?$/i.test(path) && !PASTE_PAGES.test(path) || /^\/raw\.php$/i.test(path) && /[?&]i=\w{4,}/.test(q) ? "raw" : "";
+  if (host === "raw.githubusercontent.com" || host === "gist.githubusercontent.com") return path.split("/").filter(Boolean).length >= 3 ? "raw" : "";
+  if (host === "github.com" || host === "gist.github.com") return /^\/[\w.-]+\/[\w.-]+\/raw\/./i.test(path) ? "raw" : "";
+  if (host === "gitlab.com") return /\/-\/raw\/.|^\/[\w.-]+\/[\w.-]+\/raw\/./i.test(path) ? "raw" : "";
+  if (host === "bitbucket.org") return /^\/[\w.-]+\/[\w.-]+\/raw\/./i.test(path) ? "raw" : "";
+  if (host === "t.me" || host === "telegram.me") return /^\/s\/\w{4,}/i.test(path) ? "raw" : /^\/(?!joinchat|addstickers|addemoji|share|proxy|socks|iv|login|setlanguage|addtheme|bg|confirmphone|\+)\w{5,32}\/?$/i.test(path) ? "hidden" : "";
+  if (host === "docs.google.com") return /^\/(?:document|spreadsheets|presentation)\/d\/(?:e\/)?[\w-]{20,}\/(?:export|pub|gviz)/i.test(path) || /^\/(?:document|spreadsheets)\/d\/[\w-]{20,}/i.test(path) && /[?&](?:format|output|export)=/i.test(q) ? "raw" : /^\/(?:document|spreadsheets|presentation)\/d\/[\w-]{20,}/i.test(path) ? "linked" : "";
+  if (host === "drive.google.com" || host === "drive.usercontent.google.com") return /^\/(?:uc|download)\/?$/i.test(path) && /[?&]id=[\w-]{10,}/.test(q) ? "raw" : /^\/file\/d\/[\w-]{20,}/.test(path) ? "linked" : "";
+  if (host === "dl.dropboxusercontent.com" || host === "dl.dropbox.com") return path.length > 3 ? "raw" : "";
+  if (host === "dropbox.com") return /^\/(?:s|scl\/fi)\/./i.test(path) ? /[?&](?:dl|raw)=1/.test(q) ? "raw" : "linked" : "";
+  if (host === "firebaseremoteconfig.googleapis.com") return /^\/v1\/projects\/[\w-]+\/namespaces\/[\w-]+:fetch/i.test(path) ? "raw" : "";
+  if (host === "firestore.googleapis.com") return /^\/v1\/projects\/[\w-]+\/databases\/[^/%]+\/documents\/\w/i.test(path) ? "raw" : "";
+  if (host === "steamcommunity.com") return /^\/(?:profiles\/\d{10,}|id\/[\w-]{2,})\/?$/i.test(path) ? "raw" : "";
+  if (/\/ipfs\/(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{50,})/.test(path) || /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{50,})\.ipfs\./i.test(host)) return "raw";
+  if (under(host, ["youtube.com", "youtu.be", "twitter.com", "x.com"])) return /^\/(?:watch|channel\/|@|c\/|user\/|[\w-]{11}$|[\w]{3,15}\/?$|[\w]{3,15}\/status\/\d)/i.test(path) ? "hidden" : "";
+  if (under(host, SERVERLESS) && !SERVERLESS.includes(host) && /\.(?:txt|json|cfg|conf|ini|dat)$|\/(?:raw|config|cfg|conf|settings|c2|server|servers|domains?|hosts?|ip)\/?$/i.test(path)) return "raw";
+  return "";
+}

@@ -328,9 +328,16 @@ function rules(sig: Signals, m: Manifest, extra: Behavior[], context: Context, s
     const eavesdrop = ["accessibility", "notification_listener", "sms_read"].filter(id => has(id) && has(id)!.severity !== "low");
     add("c2_socket", "Terhubung ke server pelaku lewat IP/DDNS (koneksi langsung)", rat.length || concealed.length ? "high" : eavesdrop.length ? "medium" : "low", [join("server", direct.map(ep), 4), concealed.length ? "alamat server disembunyikan (disamarkan/kode native): penyamaran yang disengaja" : "", join("API soket", api("net").filter(x => /Socket/.test(x)), 3), rat.length ? `bersama kemampuan: ${rat.join(" + ")}` : ""]);
   }
+  // Dead-drop resolver: the server address is published on a public service (paste/raw file, exported doc, Telegram channel,
+  // Steam profile...) and fetched at runtime, so it can be swapped without a new build. Strong next to RAT/stealer code or hidden.
+  const drops = eps.filter(e => e.kind === "deaddrop");
+  if (drops.length) {
+    const rat = ["banking_trojan", "sms_stealer", "net_rat", "net_stealer", "net_keylogger", "net_credential_theft", "credential_theft", "keylogger"].filter(has), concealed = drops.filter(e => e.source.startsWith("deobfuscated"));
+    add("dead_drop", "Mengambil alamat server dari layanan publik (dead drop)", rat.length || concealed.length ? "high" : "medium", [join("sumber", drops.map(ep), 4), concealed.length ? "alamat sumber konfigurasi disembunyikan/dienkripsi: penyamaran yang disengaja" : "", rat.length ? `bersama kemampuan: ${rat.join(" + ")}` : "", "alamat server sebenarnya diambil saat aplikasi berjalan dan tidak terlihat secara statis"]);
+  }
   // Context gate: everyday capabilities only matter next to a malicious pattern or channel. Without one they stay low, so
   // legitimate apps (SMS clients, keyboards, app stores, media players...) are not presented as threats.
-  const malicious = out.some(b => ["sms_stealer", "banking_trojan", "dropper", "exfil_telegram", "exfil_webhook", "exfil_tunnel"].includes(b.id) || ["c2_socket", "obfuscated_strings", "hidden_payload", "otp_intercept", "system_impersonation"].includes(b.id) && RANK[b.severity] >= RANK.high);
+  const malicious = out.some(b => ["sms_stealer", "banking_trojan", "dropper", "exfil_telegram", "exfil_webhook", "exfil_tunnel"].includes(b.id) || ["c2_socket", "obfuscated_strings", "hidden_payload", "otp_intercept", "system_impersonation", "encrypted_config", "dead_drop"].includes(b.id) && RANK[b.severity] >= RANK.high);
   if (!malicious) for (const b of out) if (GATED.has(b.id) && b.severity === "medium") b.severity = "low";
   return out.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
 }
@@ -347,7 +354,7 @@ const SYSTEM_NAMESPACES: [RegExp, RegExp, string][] = [
   [/^(?:android|com\.android)(?:\.|$)/, VENDOR, "sistem Android"],
 ];
 const SYSTEM_PROCESS = /^(?:system|android(?:\.process\.[\w.]+)?|com\.android\.(?:systemui|phone|settings|providers\.[\w.]+|server[\w.]*|bluetooth|nfc|shell)|android\.process)$/;
-const GATED = new Set(["overlay", "keyboard", "contacts", "call_log", "device_identifiers", "location", "screen_capture", "camera_mic", "install_apps", "dynamic_code", "notification_listener", "device_admin", "exfil_panel", "exfil_ip", "exfil_email", "native_anti_analysis", "nfc_relay", "c2_socket", "obfuscated_strings"]);
+const GATED = new Set(["overlay", "keyboard", "contacts", "call_log", "device_identifiers", "location", "screen_capture", "camera_mic", "install_apps", "dynamic_code", "notification_listener", "device_admin", "exfil_panel", "exfil_ip", "exfil_email", "native_anti_analysis", "nfc_relay", "c2_socket", "obfuscated_strings", "dead_drop"]);
 const SOURCE: Record<string, string> = {dex: "kode DEX", payload: "payload tersembunyi", resources: "resource", manifest: "manifest", exe: "string program", dotnet: "string .NET"};
 // Where an endpoint was found (Endpoint.source), in Indonesian.
 export const sourceLabel = (s: string) => s.startsWith("deobfuscated:") ? `disamarkan: ${s.slice(13)}` : s.startsWith("native:") ? `library native ${s.slice(7)}` : SOURCE[s] || s;
