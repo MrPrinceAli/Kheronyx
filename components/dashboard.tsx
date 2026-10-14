@@ -23,13 +23,12 @@ function date(value:string){return new Date(value).toLocaleString("id-ID",{day:"
 function FileIcon({kind,size=22}:{kind:string;size?:number}){return kind==="pdf"?<FileText size={size}/>:kind==="png" || kind==="jpg"?<FileImage size={size}/>:<FileCode2 size={size}/>;}
 const stageText:Record<string,string>={download:"Mengambil file",extract:"Bedah struktur",virustotal:"Memeriksa reputasi",ai:"Penilaian AI",save:"Menyimpan laporan"};
 function jobStatusText(job:Job){if(job.status==="failed")return job.error || "Analisis gagal.";if(job.status==="queued")return job.error?`Gagal sementara, dicoba ulang otomatis (${job.attempts}/5)`:"Dalam antrean";return `${stageText[job.stage || ""] || "Memproses"}…${job.attempts>1?` (percobaan ${job.attempts}/5)`:""}`;}
-// "gpt-6-sol" -> "GPT-6 Sol", "gemini-3.8-flash" -> "Gemini 3.8 Flash": the label follows the configured primary model.
-function modelLabel(id:string){return id.split("-").map(part=>/^(gpt|glm)$/i.test(part)?part.toUpperCase():part.charAt(0).toUpperCase()+part.slice(1)).join(" ").replace(/^GPT (\d)/,"GPT-$1");}
 function RiskBadge({risk}:{risk:Risk}){return <span className={`risk-badge risk-${risk}`} title={riskHint[risk]}><span className="status-dot"/>{riskText[risk]}</span>;}
 async function jsonRequest(url:string,options?:RequestInit){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error || "Permintaan gagal.");return data;}
 function uploadFile(url:string,file:File,onProgress:(loaded:number)=>void){return new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open("PUT",url);xhr.setRequestHeader("Content-Type","application/octet-stream");xhr.setRequestHeader("x-upsert","false");xhr.timeout=600000;xhr.upload.onprogress=e=>onProgress(e.loaded);xhr.onload=()=>xhr.status>=200 && xhr.status<300?resolve():reject(new Error("Upload gagal. Coba pilih file kembali."));xhr.onerror=()=>reject(new Error("Koneksi upload terputus."));xhr.ontimeout=()=>reject(new Error("Upload melewati batas waktu."));xhr.send(file);});}
 export function Dashboard({config}:{config:AppConfig}) {
-  const engineName=modelLabel(config.model);
+  // Product branding: the label stays "GPT-6 Astra" whichever gateway model in the chain answers.
+  const engineName="GPT-6 Astra";
   const leave=useLeaveTransition();
   const [uploadVirusTotal,setUploadVirusTotal]=useState(true),[vtRefreshing,setVTRefreshing]=useState(false);
   const [file,setFile]=useState<File|null>(null),[drag,setDrag]=useState(false),[phase,setPhase]=useState<"idle"|"upload"|"analysis">("idle"),[uploaded,setUploaded]=useState(0),[step,setStep]=useState(0),[error,setError]=useState(""),[warning,setWarning]=useState(""),[reports,setReports]=useState<Report[]>([]),[active,setActive]=useState<Report|null>(null),[historyLoading,setHistoryLoading]=useState(true),[loggingOut,setLoggingOut]=useState(false),[details,setDetails]=useState(false),[copied,setCopied]=useState(false),[jobs,setJobs]=useState<Job[]>([]),[notice,setNotice]=useState("");
