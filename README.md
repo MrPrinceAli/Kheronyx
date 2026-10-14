@@ -171,7 +171,7 @@ npm run dev
 |---|---|
 | `ACCESS_PASSWORD` / `ACCESS_PASSWORD_HASH` | Login password (use the hash in production: `node scripts/password-hash.mjs`) |
 | `SESSION_SECRET` | HMAC key for sessions |
-| `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL` | OpenAI-compatible gateway for the assessment |
+| `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL` | OpenAI-compatible gateway for the assessment; `AI_FALLBACK_MODEL` is a comma-separated backup chain |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob private store (enables 250 MB uploads and background jobs) |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Reports, jobs, rate limits |
 | `VIRUSTOTAL_API_KEY` | Hash reputation (optional upload) |

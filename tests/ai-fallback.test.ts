@@ -50,3 +50,10 @@ test("same or disabled backup does not accidentally double-charge a failed prima
 test("a valid interpretation of incomplete extraction stays unknown without unnecessary fallback",async t=>{
   await scenario(t,[valid()],async calls=>{const result=await assess({...artifact,incomplete:true});assert.equal(result.assessment.risk,"unknown");assert.equal(result.assessment.confidence,"low");assert.equal(result.model,"gpt-6-astra");assert.equal(calls.length,1);});
 });
+test("a comma-separated backup chain is tried in order until one model answers",async t=>{
+  await scenario(t,[new Response("down",{status:503}),new DOMException("Timed out","TimeoutError"),valid()],async calls=>{
+    const result=await assess(artifact);assert.equal(result.model,"gemini-3.8-flash");
+    assert.deepEqual(calls.map(c=>c.model),["gpt-6-astra","gpt-6-sol","gemini-3.8-flash"]);
+    assert.equal(calls[2].temperature,0.1);assert.equal(calls[2].reasoning_effort,undefined);
+  },"gpt-6-sol, gemini-3.8-flash ,gpt-6.1-sol");
+});
