@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
 import type { Report } from "@/lib/types";
 import type { Endpoint } from "@/lib/endpoints";
 import { hostOf, registrableDomain } from "@/lib/hosts";
@@ -13,6 +13,8 @@ const SOURCE: Record<string, string> = {dex: "kode aplikasi", payload: "kode ter
 const where = (s: string) => s.startsWith("deobfuscated:") ? `disembunyikan (${s.slice(13)})` : s.startsWith("native:") ? `kode native (${s.slice(7)})` : SOURCE[s] || s;
 const concealed = (e: Endpoint) => e.source.startsWith("deobfuscated:");
 const valid = (e: unknown): e is Endpoint => Boolean(e) && typeof (e as Endpoint).value === "string" && typeof (e as Endpoint).host === "string" && typeof (e as Endpoint).kind === "string" && typeof (e as Endpoint).source === "string";
+// Strongest endpoints come first (lib/endpoints.ts sorts them); the rest stay behind "Lihat semua".
+const VISIBLE = 2;
 const strings = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 // "C=DE, ST=Frankfurt, O=..., CN=..., emailAddress=..." -> {C: "DE", ...}
 const subject = (s: string) => Object.fromEntries(s.split(/,\s*(?=[A-Za-z.]+=)/).map(p => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]).filter(([k, v]) => k && v));
@@ -33,6 +35,7 @@ function Row({tag, label, value, note, danger}: {tag: string; label: string; val
 // Telegram bot/chat ids, the signer identity the author typed into the certificate, its fingerprint, the package name and
 // malware family. Addresses are plain text, never links.
 export function EndpointPanel({report}: {report: Report}) {
+  const [showAll, setShowAll] = useState(false);
   const m = report.artifact.metadata as Record<string, unknown>, intel = report.artifact.threatIntel;
   const list = Array.isArray(m.endpoints) ? m.endpoints.filter(valid).slice(0, 25) : [];
   const campaign = (m.campaign ?? {}) as Record<string, unknown>, bots = strings(campaign.telegramBots), chats = strings(campaign.chatIds);
@@ -62,10 +65,6 @@ export function EndpointPanel({report}: {report: Report}) {
       <div className={panel.name}>{suspect ? <UserX size={17} strokeWidth={1.5}/> : <RadioTower size={17} strokeWidth={1.5}/>}<h3>{suspect ? "Jejak pelaku" : "Server yang dihubungi"}</h3>{suspect && <span className={`${panel.badge} ${panel.danger}`}>Data pelaku</span>}</div>
     </div>
     <p>{suspect ? `Alamat server dan identitas yang dipakai pembuat ${app} ini. Data ini berguna untuk laporan ke pihak berwenang, bank, atau Telegram. Identitas di sertifikat diisi sendiri oleh pembuatnya, jadi bisa palsu, tetapi tetap bisa menghubungkan file-file dari pelaku yang sama.` : `Alamat yang dihubungi ${app} ini. Belum ada tanda berbahaya, jadi ini belum tentu milik penipu.`}{hidden ? " Sebagian alamat sengaja disembunyikan di dalam kode." : ""}</p>
-    {!!list.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}</h4>{list.map(e => {
-      const n = notes(e), tag = suspect ? TAG[e.kind] ?? "SERVER PELAKU" : "SERVER";
-      return <Row key={`${e.kind}:${e.value}`} tag={tag} danger={suspect && e.kind !== "url"} label={`${KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
-    })}</div>}
     {suspect && <div className={styles.group}><h4><Fingerprint size={13}/>Identitas pelaku</h4>
       {person && <Row tag="NAMA DI SERTIFIKAT" danger label={debug ? "Sertifikat debug bawaan Android: pembuatnya tidak memakai identitas sendiri" : "Diisi sendiri oleh pembuat aplikasi, bisa palsu"} value={person}/>}
       {email && <Row tag="EMAIL PELAKU" danger label="Email di sertifikat penanda tangan" value={email}/>}
@@ -76,6 +75,12 @@ export function EndpointPanel({report}: {report: Report}) {
       {chats.map(c => <Row key={c} tag="CHAT PELAKU" danger label="chat_id Telegram penerima data curian" value={c}/>)}
       {pkg && <Row tag="NAMA PAKET" label="Identitas aplikasi di Android" value={pkg}/>}
       {family && <Row tag="KELUARGA MALWARE" danger label="Menurut abuse.ch" value={family}/>}
+    </div>}
+    {!!list.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{list.length}</span></h4>{(showAll ? list : list.slice(0, VISIBLE)).map(e => {
+      const n = notes(e), tag = suspect ? TAG[e.kind] ?? "SERVER PELAKU" : "SERVER";
+      return <Row key={`${e.kind}:${e.value}`} tag={tag} danger={suspect && e.kind !== "url"} label={`${KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
+    })}
+      {list.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({list.length})<ChevronDown size={13}/></>}</button>}
     </div>}
     <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya</span><span>Alamat yang diunduh atau didekripsi saat {app} berjalan tidak terlihat</span></div>
   </section>;
