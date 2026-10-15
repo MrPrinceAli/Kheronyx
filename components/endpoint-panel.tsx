@@ -7,7 +7,7 @@ import panel from "./virus-total.module.css";
 import styles from "./trace.module.css";
 import { Collapsible, chevronClass } from "./collapsible";
 
-const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", deaddrop: "Sumber konfigurasi jarak jauh (dead drop)", url: "URL", email: "Email"};
+const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", deaddrop: "Sumber konfigurasi jarak jauh (dead drop)", phishing: "Domain peniru merek", url: "URL", email: "Email"};
 // Labels when the file is judged malicious; neutral wording otherwise, so legitimate developers are never called attackers.
 const TAG: Record<string, string> = {telegram: "BOT PELAKU", email: "EMAIL PELAKU", deaddrop: "SUMBER KONFIG PELAKU", url: "URL TERKAIT"};
 const SUSPECT_KIND: Record<string, string> = {deaddrop: "Sumber konfigurasi pelaku (dead drop)"};
@@ -16,6 +16,8 @@ const config = (v: unknown): v is Config => Boolean(v) && ["algorithm", "via", "
 const SOURCE: Record<string, string> = {dex: "kode aplikasi", payload: "kode tersembunyi (payload)", resources: "resource", manifest: "manifest", exe: "isi program", dotnet: "string .NET"};
 const where = (s: string) => s.startsWith("deobfuscated:") ? `disembunyikan (${s.slice(13)})` : s.startsWith("native:") ? `kode native (${s.slice(7)})` : SOURCE[s] || s;
 const concealed = (e: Endpoint) => e.source.startsWith("deobfuscated:");
+// Look-alike brand domain (lib/brands.ts) attached to an endpoint, validated because metadata is stored JSON.
+const lookalike = (e: Endpoint) => e.brand && typeof e.brand.brand === "string" && typeof e.brand.reason === "string" ? e.brand : undefined;
 const valid = (e: unknown): e is Endpoint => Boolean(e) && typeof (e as Endpoint).value === "string" && typeof (e as Endpoint).host === "string" && typeof (e as Endpoint).kind === "string" && typeof (e as Endpoint).source === "string";
 // Strongest endpoints come first (lib/endpoints.ts sorts them); the rest stay behind "Lihat semua".
 const VISIBLE = 2;
@@ -79,7 +81,7 @@ export function EndpointPanel({report}: {report: Report}) {
     if (d?.ageDays !== undefined) out.push(d.ageDays < 180 ? `domain baru: berumur ${d.ageDays} hari${d.registrar ? `, registrar ${d.registrar}` : ""}` : `domain lama (${Math.round(d.ageDays / 365)} tahun)`);
     return out;
   };
-  const app = report.kind === "apk" ? "aplikasi" : "program", hidden = list.some(concealed);
+  const app = report.kind === "apk" ? "aplikasi" : "program", hidden = list.some(concealed), phishing = list.some(e => e.kind === "phishing" && lookalike(e));
   // Plain URLs are context, not servers: they get their own neutral list below the attacker servers.
   const seenBy = (host: string) => contacted.find(c => c.host === host || c.ip === host)?.by;
   const seen = (e: Endpoint) => Boolean(seenBy(e.host)), inConfig = (host: string) => c2s.some(x => x.host === host);
@@ -89,8 +91,12 @@ export function EndpointPanel({report}: {report: Report}) {
   const extra = contacted.filter(c => !list.some(e => e.host === c.host || e.host === c.ip) && !c2s.some(x => x.host === c.host || x.host === c.ip));
   const detail = (c: SandboxContact) => [c.host && c.ip ? `IP ${c.ip}` : "", c.port ? `port ${c.port}${c.protocol ? `/${c.protocol}` : ""}` : "", c.url || ""].filter(Boolean).join(" · ");
   const row = (e: Endpoint) => {
-    const n = notes(e), by = seenBy(e.host); if (inConfig(e.host)) n.unshift("juga ada di konfigurasi malware (Tria.ge)"); if (by) n.unshift(watched(by));
-    return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : e.kind === "deaddrop" ? "SUMBER KONFIG" : "SERVER"} danger={suspect} label={`${(suspect && SUSPECT_KIND[e.kind]) || KIND[e.kind] || e.kind} · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={n.join(" · ") || undefined}/>;
+    const n = notes(e), by = seenBy(e.host), brand = lookalike(e); if (inConfig(e.host)) n.unshift("juga ada di konfigurasi malware (Tria.ge)"); if (by) n.unshift(watched(by));
+    const at = `${where(e.source)}${e.via ? ` · ${e.via}` : ""}`;
+    // Look-alike brand domains: red "DOMAIN PENIRU" when the report is suspect or the match itself is strong (cheap TLD, free
+    // hosting, punycode, lure word, or a newly registered domain per RDAP); otherwise the neutral "DOMAIN MIRIP MEREK".
+    if (e.kind === "phishing" && brand) {const strong = suspect || brand.severity === "high" || n.some(x => x.startsWith("domain baru")); return <Row key={`${e.kind}:${e.value}`} tag={strong ? "DOMAIN PENIRU" : "DOMAIN MIRIP MEREK"} danger={strong} label={`Meniru ${brand.brand} · ${brand.reason} · ${at}`} value={e.value} note={n.join(" · ") || undefined}/>;}
+    return <Row key={`${e.kind}:${e.value}`} tag={suspect ? TAG[e.kind] ?? "SERVER PELAKU" : e.kind === "deaddrop" ? "SUMBER KONFIG" : "SERVER"} danger={suspect} label={`${(suspect && SUSPECT_KIND[e.kind]) || KIND[e.kind] || e.kind}${brand ? ` · meniru ${brand.brand}` : ""} · ${at}`} value={e.value} note={n.join(" · ") || undefined}/>;
   };
   const extracted = (x: typeof c2s[number]) => {
     const by = seenBy(x.host), n = notes({value: x.value, host: x.host, kind: "panel", source: "triage"}); if (by) n.unshift(watched(by));
@@ -115,7 +121,7 @@ export function EndpointPanel({report}: {report: Report}) {
     <div className={panel.heading}>
       <div className={panel.name}>{suspect ? <UserX size={17} strokeWidth={1.5}/> : <RadioTower size={17} strokeWidth={1.5}/>}<h3>{suspect ? "Jejak pelaku" : "Server yang dihubungi"}</h3>{suspect && <span className={`${panel.badge} ${panel.danger}`}>Data pelaku</span>}</div>
     </div>
-    <p>{suspect ? `Alamat server dan identitas yang dipakai pembuat ${app} ini. Data ini berguna untuk laporan ke pihak berwenang, bank, atau Telegram. Identitas di sertifikat diisi sendiri oleh pembuatnya, jadi bisa palsu, tetapi tetap bisa menghubungkan file-file dari pelaku yang sama.` : `Alamat yang dihubungi ${app} ini. Belum ada tanda berbahaya, jadi ini belum tentu milik penipu.`}{hidden ? " Sebagian alamat sengaja disembunyikan di dalam kode." : ""}</p>
+    <p>{suspect ? `Alamat server dan identitas yang dipakai pembuat ${app} ini. Data ini berguna untuk laporan ke pihak berwenang, bank, atau Telegram. Identitas di sertifikat diisi sendiri oleh pembuatnya, jadi bisa palsu, tetapi tetap bisa menghubungkan file-file dari pelaku yang sama.` : `Alamat yang dihubungi ${app} ini. Belum ada tanda berbahaya, jadi ini belum tentu milik penipu.`}{hidden ? " Sebagian alamat sengaja disembunyikan di dalam kode." : ""}{phishing ? " Ada alamat yang memakai nama merek resmi (bank, e-wallet, marketplace, kurir, atau instansi) padahal bukan domain resminya: jangan buka alamat tersebut dan jangan masukkan data apa pun." : ""}</p>
     {suspect && <div className={styles.group}><h4><Fingerprint size={13}/>Identitas pelaku</h4>
       {person && <Row tag="NAMA DI SERTIFIKAT" danger label={debug ? "Sertifikat debug bawaan Android: pembuatnya tidak memakai identitas sendiri" : publicKey ? "Kunci uji publik AOSP yang bisa dipakai siapa saja: pembuatnya tidak memakai identitas sendiri" : "Diisi sendiri oleh pembuat aplikasi, bisa palsu"} value={person}/>}
       {email && !borrowed && <Row tag="EMAIL PELAKU" danger label="Email di sertifikat penanda tangan" value={email}/>}

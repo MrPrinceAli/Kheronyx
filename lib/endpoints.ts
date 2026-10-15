@@ -1,14 +1,17 @@
 import { member, redactSecrets, sourceLabel } from "./behaviors";
 import { decodeHidden } from "./deobfuscate";
+import { impersonatedBrand, type Lookalike } from "./brands";
 import { BENIGN, DDNS_HINT, DDNS_HOST, DOMAIN, SHARED, customerHost, deadDrop, ipv4, publicHost, publicIpv4, under, validPort, zoneOf } from "./hosts";
 // C2/exfiltration endpoints from candidate strings (DEX/payload strings, deobfuscated values, native .so strings,
 // resources.arsc, manifest meta-data, EXE ASCII/UTF-16 and .NET user strings). Strings are only pattern-matched; no
 // address is ever resolved or contacted. Bare IPs need context (port, URL, deobfuscation, native code or a link to
 // network code) so resolvers, OIDs and version numbers are not reported.
 // deaddrop: public service hosting the C2 address (paste/raw/export document), label "Sumber konfigurasi pelaku (dead drop)".
-export type EndpointKind = "panel" | "telegram" | "webhook" | "firebase" | "ip" | "ddns" | "tunnel" | "deaddrop" | "url" | "email";
+// phishing: web address on a look-alike domain of a bank/e-wallet/marketplace/courier/government brand (lib/brands.ts),
+// label "Domain peniru merek (<brand>)"; `brand` is also set on DDNS/tunnel/Firebase endpoints whose host imitates a brand.
+export type EndpointKind = "panel" | "telegram" | "webhook" | "firebase" | "ip" | "ddns" | "tunnel" | "deaddrop" | "phishing" | "url" | "email";
 // source: dex | payload | resources | manifest | exe | dotnet | native:<lib> | deobfuscated:<technique>
-export type Endpoint = {value: string; host: string; port?: number; kind: EndpointKind; source: string; via?: string};
+export type Endpoint = {value: string; host: string; port?: number; kind: EndpointKind; source: string; via?: string; brand?: Lookalike};
 type Raw = {text: string; source: string; context: boolean; via?: string; callers?: string[]};
 type Scored = Endpoint & {score: number};
 const MAX_RAW = 6000, PER_CALL = 1500, MAX_SCAN = 2_000_000, MAX_DECODE = 20000, MAX = 25;
@@ -32,8 +35,8 @@ const FIREBASE = ["firebaseio.com", "firebasedatabase.app", "cloudfunctions.net"
 const IDENTIFIER = /^(?:crl\d*|ocsp\d*|cacerts?|certs?)\./i, IDENTIFIER_PATH = /\.(?:crl|crt|cer|der|p7c)\d?$|\/experiments\/|\/rtp-hdrext\//i;
 const QUIET = ["webrtc.org", "crbug.com", "chromium.org", "globalsign.net", "globalsign.com", "public-trust.com", "digicert.com", "sectigo.com", "usertrust.com", "entrust.net", "letsencrypt.org", "lencr.org", "identrust.com", "godaddy.com", "starfieldtech.com", "comodoca.com", "verisign.com", "symcb.com", "symcd.com", "thawte.com", "geotrust.com", "pki.goog", "amazontrust.com", "quovadisglobal.com", "certum.pl", "buypass.no", "swisssign.net", "schemas.android.com", "googlesource.com", "googletagmanager.com", "gravatar.com", "jquery.com", "bootstrapcdn.com", "unpkg.com", "akamaihd.net", "akamai.net", "branch.io", "app.link", "appsflyer.com", "adjust.com", "onesignal.com", "sentry.io", "amplitude.com", "mixpanel.com", "facebook.net", "fb.com", "fb.me", "openstreetmap.org", "mapbox.com", "bing.com", "baidu.com", "qq.com", "umeng.com", "xiaomi.com", "huawei.com", "hicloud.com", "samsung.com", "stackoverflow.com", "sourceforge.net", "gnu.org", "opensource.org", "creativecommons.org", "json.org", "ietf.org", "iana.org", "openssl.org", "curl.se", "haxx.se", "sqlite.org", "zlib.net", "libpng.org", "fontawesome.com", "gradle.org", "kotlinlang.org", "jetbrains.com", "oracle.com", "java.com", "sun.com", "ns.adobe.com", "xmlsoap.org", "openxmlformats.org", "firebase.com", "go.dev", "golang.org", "tempuri.org", "whatwg.org", "g.co", "eclipse.org", "netty.io", "slf4j.org", "jivesoftware.com", "semrush.com", "ip-api.com", "ipinfo.io", "ip.sb", "dyn.com", "noip.com", "no-ip.com", "dynu.com", "ngrok.com", "afraid.org", "changeip.com", "dynv6.com", "duckdns.com", "playit.gg", "localxpose.io", "yandex.ru", "yandex.net", "yandex.com", "localhost"];
 const MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "office365.com", "aol.com", "icloud.com", "yandex.ru", "yandex.com", "mail.ru", "zoho.com", "gmx.com", "gmx.net", "protonmail.com", "proton.me"];
-const BASE: Record<EndpointKind, number> = {telegram: 1, ddns: 1, ip: 2, webhook: 2, tunnel: 2, panel: 3, deaddrop: 3, email: 4, firebase: 5, url: 6};
-const CAPS: Partial<Record<EndpointKind, number>> = {url: 8, panel: 10, deaddrop: 6, firebase: 4, email: 4};
+const BASE: Record<EndpointKind, number> = {telegram: 1, ddns: 1, ip: 2, webhook: 2, tunnel: 2, panel: 3, deaddrop: 3, phishing: 3, email: 4, firebase: 5, url: 6};
+const CAPS: Partial<Record<EndpointKind, number>> = {url: 8, panel: 10, deaddrop: 6, phishing: 8, firebase: 4, email: 4};
 // Only deliberate obfuscation is strong context. Native libraries are full of dotted version numbers ("6.7.8.5" in libvlc),
 // so their bare IPs need a port or URL like any other string.
 const hidden = (source: string) => source.startsWith("deobfuscated");
@@ -88,7 +91,7 @@ export class EndpointCollector {
 }
 function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored[] {
   const out: Scored[] = [], strong = hidden(r.source), via = r.via || pickVia(r.callers, linked), context = r.context || strong || Boolean(r.callers?.some(linked));
-  const push = (kind: EndpointKind, value: string, host: string, port?: number) => out.push({value: redactSecrets(value).slice(0, 160), host, ...port ? {port} : {}, kind, source: r.source, ...via ? {via} : {}, score: BASE[kind] * 2 - (kind === "ip" && port ? 2 : 0) + (strong ? 0 : 1)});
+  const push = (kind: EndpointKind, value: string, host: string, port?: number, brand?: Lookalike | null) => out.push({value: redactSecrets(value).slice(0, 160), host, ...port ? {port} : {}, kind, source: r.source, ...via ? {via} : {}, ...brand ? {brand} : {}, score: BASE[kind] * 2 - (kind === "ip" && port ? 2 : 0) - (brand?.severity === "high" ? 1 : 0) + (strong ? 0 : 1)});
   let rest = r.text;
   for (const m of r.text.matchAll(URL_RE)) {
     rest = rest.replace(m[0], " ");
@@ -108,8 +111,11 @@ function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored
     if (host === "api.telegram.org" || /^\/bot[^/]*\/(?:send\w+|getUpdates|getMe|setWebhook|getFile|forwardMessage)\b/i.test(path)) {push("telegram", value, host, port); continue;}
     if (/^(?:www\.|ptb\.|canary\.)?discord(?:app)?\.com$/.test(host) && /^\/api\/webhooks\//i.test(path) || host === "hooks.slack.com" && /^\/services\//i.test(path)) {push("webhook", value, host, port); continue;}
     if (under(host, BENIGN) || under(host, QUIET) || PLACEHOLDER.test(host)) continue;
-    if (under(host, FIREBASE)) {push("firebase", value, host, port); continue;}
-    const zone = zoneOf(host); if (zone) {if (customerHost(host)) push(zone as EndpointKind, value, host, port); continue;}
+    // Look-alike brand domains (official brand domains never match) are phishing pages, not neutral URLs or shared noise.
+    const brand = impersonatedBrand(host, path);
+    if (under(host, FIREBASE)) {push("firebase", value, host, port, brand); continue;}
+    if (brand && /^(?:https?|wss?)$/.test(scheme)) {push("phishing", value, host, port, brand); continue;}
+    const zone = zoneOf(host); if (zone) {if (customerHost(host)) push(zone as EndpointKind, value, host, port, brand); continue;}
     if (under(host, SHARED)) continue;
     if (IDENTIFIER.test(host) || IDENTIFIER_PATH.test(path)) continue;
     const kind: EndpointKind = PANEL.test(path) || /^(?:ftp|tcp|udp)$/.test(scheme) ? "panel" : "url";
@@ -120,7 +126,7 @@ function classify(r: Raw, smtp: boolean, linked: (m: string) => boolean): Scored
   if (rest.includes(":AA")) for (const m of rest.matchAll(TOKEN)) push("telegram", `bot ${m[1]}:…${m[2].slice(-4)}`, "api.telegram.org");
   for (const m of rest.matchAll(DDNS_HOST)) {
     const host = m[1].toLowerCase(), port = m[2] && validPort(m[2]) ? Number(m[2]) : undefined;
-    if (customerHost(host) && (!m[2] || port)) push(zoneOf(host) as EndpointKind, `${host}${port ? `:${port}` : ""}`, host, port);
+    if (customerHost(host) && (!m[2] || port)) push(zoneOf(host) as EndpointKind, `${host}${port ? `:${port}` : ""}`, host, port, impersonatedBrand(host));
   }
   for (const m of rest.matchAll(BARE_IP)) {
     const ip = m[1], port = m[2] && validPort(m[2]) ? Number(m[2]) : undefined;
@@ -145,10 +151,12 @@ function pickVia(callers: string[] | undefined, linked: (m: string) => boolean) 
   if (!callers?.length) return undefined;
   const m = callers.find(linked) || callers[0]; return member(m).slice(0, 120);
 }
-// Hosts worth a reputation lookup (URLhaus/ThreatFox/RDAP), strongest first; shared platforms and big mail providers skipped.
+// Hosts worth a reputation lookup (URLhaus/ThreatFox/RDAP), strongest first (look-alike brand domains, then servers, then
+// plain URLs); shared platforms and big mail providers skipped.
 export function endpointHosts(list: Endpoint[], max = 10) {
   const pick = (e: Endpoint) => e.kind !== "webhook" && !under(e.host, SHARED) && !(e.kind === "email" && under(e.host.replace(/^smtp\./, ""), MAIL));
-  return [...new Set([...list.filter(e => pick(e) && e.kind !== "url"), ...list.filter(e => pick(e) && e.kind === "url")].map(e => e.host))].slice(0, max);
+  const rank = (e: Endpoint) => e.brand ? 0 : e.kind === "url" ? 2 : 1;
+  return [...new Set(list.filter(pick).map((e, i) => ({e, i})).sort((a, b) => rank(a.e) - rank(b.e) || a.i - b.i).map(x => x.e.host))].slice(0, max);
 }
 // Callers whose class also uses network APIs (Signals.codeClasses "net").
 export const netLinker = (classes: Set<string> | undefined) => (method: string) => Boolean(classes?.has(owner(method)));

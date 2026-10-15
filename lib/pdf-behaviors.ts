@@ -3,6 +3,7 @@
 // documents. Inputs come from the raw token scan (lib/extract.ts pdfTokens, incl. inflated object streams) and pdf.js
 // (text, link annotations, JS actions, attachments). Links are only classified by name; nothing is opened or resolved.
 import type { Behavior } from "./behaviors";
+import { impersonatedBrand, type Lookalike } from "./brands";
 import { BENIGN, DDNS, TUNNEL, hostOf, ipv4, publicHost, publicIpv4, under } from "./hosts";
 export type PdfLink = {url: string; page: number; cover?: number};
 export type PdfFacts = {
@@ -36,11 +37,13 @@ const WATERMARK = ["tcpdf.org", "camscanner.com", "camscanner.net", "intsig.com"
 const RISKY_FILE = /\.(?:exe|scr|com|pif|cpl|msi|msp|dll|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|jar|apk|reg|sh|iso|img|vhdx?|application|appref-ms|url|scf|chm|xll|one)$/i;
 const ARCHIVE = /\.(?:zip|rar|7z|cab|gz|tgz|tar|ace|arj|xz|bz2|z)$/i;
 const SUSPICIOUS_JS = /app\.launchURL|getURL|submitForm|exportDataObject|\blaunch\b|app\.openDoc|eval\s*\(|unescape|fromCharCode|spell\.|collab\.|media\.newPlayer|getIcon|util\.printf|app\.alert|SOAP\.|Net\.HTTP|XMLHttp|\\x[0-9a-f]{2}|%u[0-9a-f]{4}/i;
-export function linkRisk(url: string): {strong?: string; sharing?: string} {
+export function linkRisk(url: string): {strong?: string; sharing?: string; brand?: Lookalike} {
   const host = hostOf(url); if (!host) return {};
   const path = url.replace(/^[a-z][\w+.-]*:\/\/[^/?#]*/i, "");
   if (/^[a-z][\w+.-]*:\/\/[^/?#]*@/i.test(url)) return {strong: "URL berisi '@' (alamat asli disamarkan)"};
   if (ipv4(host)) return publicIpv4(host) ? {strong: "alamat IP langsung"} : {};
+  // Look-alike domain of a bank/e-wallet/marketplace/courier/government brand (official domains never match).
+  const brand = impersonatedBrand(host, path.replace(/[?#].*$/, "")); if (brand) return {strong: `domain meniru ${brand.brand}: ${brand.reason}`, brand};
   if (under(host, SHORTENER)) return {strong: "penyingkat URL (tujuan asli disembunyikan)"};
   if (under(host, FORMS) || /^docs\.google\.com$/.test(host) && /\/forms\//.test(url)) return {strong: "layanan pembuat formulir"};
   if (under(host, TUNNEL) || under(host, DDNS)) return {strong: "tunnel/DNS dinamis"};
@@ -51,7 +54,7 @@ export function linkRisk(url: string): {strong?: string; sharing?: string} {
   return {};
 }
 const decode = (u: string) => {try {return decodeURIComponent(u);} catch {return u;}};
-const safeRisk = (url: string) => {try {return linkRisk(url);} catch {return {};}};
+const safeRisk = (url: string): ReturnType<typeof linkRisk> => {try {return linkRisk(url);} catch {return {};}};
 // External = http(s) to a public host outside the big-vendor allowlist.
 export const externalLink = (url: string) => {const host = /^https?:\/\//i.test(url) ? hostOf(url) : ""; return Boolean(host) && (ipv4(host) ? publicIpv4(host) : publicHost(host)) && !under(host, BENIGN);};
 export function pdfBehaviors(f: PdfFacts, raw: {launch: string[]; submit: string[]; openJs: string[]; uris: string[]; files: string[]; uriTokens: number}): Behavior[] {
@@ -74,14 +77,21 @@ export function pdfBehaviors(f: PdfFacts, raw: {launch: string[]; submit: string
   const all = [...f.links, ...f.parsed ? [] : raw.uris.map(url => ({url, page: 0} as PdfLink))].filter(l => externalLink(l.url) && !under(hostOf(l.url), WATERMARK));
   const pagesOf = (url: string) => new Set(all.filter(l => l.url === url).map(l => l.page)).size, links = all.filter(l => !(l.cover !== undefined && l.cover < 0.001) && !((f.pages ?? 0) >= 2 && pagesOf(l.url) >= f.pages!));
   const unique = [...new Map(links.map(l => [l.url, l])).values()], risky = unique.map(l => ({...l, risk: safeRisk(l.url)}));
+  // Look-alike brand links count wherever they sit (also invisible or repeated footer links): the address itself is the lure.
+  // Visible ones are also "bad" links below (linkRisk marks them strong).
+  const looks = [...new Map(all.map(l => [l.url, l])).values()].map(l => ({...l, brand: safeRisk(l.url).brand})).filter((l): l is PdfLink & {brand: Lookalike} => Boolean(l.brand)).slice(0, 20);
+  const brands = [...new Set(looks.map(l => l.brand.brand))].slice(0, 3).join(", ");
   const body = f.text.replace(/\s+/g, " ").trim(), urls = unique.map(l => decode(l.url).toLowerCase()).join(" ").slice(0, 8000), lower = `${body} ${urls.replace(/[/?#=&._-]+/g, " ")}`.toLowerCase().slice(0, 40000);
   const strong = STRONG.map(re => lower.match(re)?.[0]).filter((x): x is string => Boolean(x)), weak = [...new Set([...lower.match(WEAK) || [], ...(urls.match(URL_WEAK) || []).map(w => w.replace(/-/g, ""))])];
   const short = (f.pages ?? 1) <= 3, cover = Math.max(0, ...unique.map(l => l.cover ?? 0)), chars = body.replace(/[^\p{L}\p{N}]/gu, "").length, linkOnly = unique.length > 0 && short && (chars < 200 || cover >= 0.3);
   // Strong lure + any outside link: medium (high with a throwaway host). Payment/brand words alone are everyday business
   // vocabulary, so they only count next to a throwaway host or in a link-only document.
   const bad = risky.filter(l => l.risk.strong || l.risk.sharing && strong.length), lure = strong.length > 0 || weak.length >= 2 && short && (bad.length > 0 || linkOnly), shown = (l: typeof risky[number]) => `${l.url.slice(0, 120)}${l.risk.strong || l.risk.sharing ? ` (${l.risk.strong || l.risk.sharing})` : ""}`;
-  if (lure && unique.length) add("pdf_phishing", "Umpan phishing: dokumen membujuk membuka tautan login/pembayaran", bad.length ? "high" : "medium", [
-    `kata umpan: ${[...strong, ...weak].slice(0, 6).join(", ")}`, `tautan: ${(bad.length ? bad : risky).slice(0, 3).map(shown).join(", ")}`, bad.length ? "tautan mengarah ke layanan yang sering dipakai halaman phishing sekali pakai" : ""]);
+  // A strong look-alike link (cheap TLD, free hosting, punycode, lure word) is phishing on its own; any look-alike raises it to high.
+  if (lure && unique.length || looks.some(l => l.brand.severity === "high")) add("pdf_phishing", `Umpan phishing: dokumen membujuk membuka tautan login/pembayaran${brands ? ` (meniru ${brands})` : ""}`, bad.length || looks.length ? "high" : "medium", [
+    strong.length || weak.length ? `kata umpan: ${[...strong, ...weak].slice(0, 6).join(", ")}` : "", looks.length ? `tautan ke domain peniru merek ${brands}: ${looks.slice(0, 3).map(l => l.url.slice(0, 120)).join(", ")}` : "",
+    bad.length || !looks.length ? `tautan: ${(bad.length ? bad : risky).slice(0, 3).map(shown).join(", ")}` : "", bad.length ? "tautan mengarah ke layanan yang sering dipakai halaman phishing sekali pakai" : ""]);
+  if (looks.length) add("brand_domain", `Domain meniru merek resmi (${brands})`, looks.some(l => l.brand.severity === "high") ? "high" : "medium", looks.slice(0, 4).map(l => `${l.url.slice(0, 120)} meniru ${l.brand.brand}: ${l.brand.reason}${l.page ? ` (halaman ${l.page})` : ""}`));
   // "One big button": little or no text, a few pages, and an outside link (often a page-sized link over an image).
   if (linkOnly) add("pdf_link_only", "Dokumen hanya berisi tombol/link ke luar", "medium", [
     chars < 200 ? `hampir tanpa teks (${chars} karakter) di ${f.pages ?? "?"} halaman` : "", cover >= 0.3 ? `satu tautan menutupi ${Math.round(Math.min(cover, 1) * 100)}% halaman (seluruh halaman menjadi tombol)` : "", `tautan: ${risky.slice(0, 2).map(shown).join(", ")}`]);
@@ -90,6 +100,6 @@ export function pdfBehaviors(f: PdfFacts, raw: {launch: string[]; submit: string
 }
 // Hosts behind the document's outside links (suspicious first), for metadata.campaign.hosts / threat-intel lookups.
 export function pdfHosts(urls: string[], max = 10) {
-  const ext = [...new Set(urls.filter(externalLink))], score = (u: string) => {const r = safeRisk(u); return r.strong ? 0 : r.sharing ? 1 : 2;};
+  const ext = [...new Set(urls.filter(externalLink))], score = (u: string) => {const r = safeRisk(u); return r.brand ? -1 : r.strong ? 0 : r.sharing ? 1 : 2;};
   return [...new Set(ext.sort((a, b) => score(a) - score(b)).map(hostOf))].slice(0, max);
 }

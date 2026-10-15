@@ -50,7 +50,7 @@ const deadDropUrls=(list:Endpoint[])=>list.filter(e=>e.kind==="deaddrop" && !e.v
 // Exfiltration/lure signals that apply to any file type (Telegram bots, webhooks, raw-IP panels...).
 function stringSignals(a: Artifact, strings: string[], extra: Behavior[] = [], lure = true, endpoints: Endpoint[] = []) {
   const sig = new Signals(); sig.strings(strings);
-  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra, {endpoints}).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || b.id === "c2_socket" || b.id === "dead_drop" || lure && b.id === "lure_keywords");
+  const ids = new Set(extra.map(b => b.id)), list = evaluate(sig, manifestModel(null), extra, {endpoints}).filter(b => ids.has(b.id) || b.id.startsWith("exfil_") || b.id === "c2_socket" || b.id === "dead_drop" || b.id === "brand_domain" || lure && b.id === "lure_keywords");
   if (list.length) {a.metadata.behaviors = behaviorMetadata(list); a.indicators.unshift(...list.map(behaviorIndicator));}
   a.urls.push(...sig.rankedUrls().slice(0, 40));
 }
