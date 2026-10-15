@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { useLeaveTransition } from "./access-transition";
-import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, ChevronRight, CircleAlert, Clock3, File, FileCode2, FileImage, FileText, Fingerprint, Info, Loader2, LockKeyhole, LogOut, ScanLine, Shield, ShieldAlert, ShieldCheck, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, ChevronRight, CircleAlert, Clock3, File, FileCode2, FileImage, FileText, Fingerprint, Info, Loader2, LockKeyhole, LogOut, Microscope, ScanLine, Shield, ShieldAlert, ShieldCheck, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { Eye } from "./eye";
 import { TypedHandle } from "./typed-handle";
 import { EngineStatus } from "./engine-status";
@@ -10,6 +10,7 @@ import { VirusTotalPanel } from "./virus-total-panel";
 import { ThreatIntelPanel } from "./threat-intel-panel";
 import { ImpactPanel } from "./impact-panel";
 import { EndpointPanel } from "./endpoint-panel";
+import { TriagePanel, triageWaiting } from "./triage-panel";
 import { pickSandbox, updateVirusTotalReport } from "@/lib/virus-total-evidence";
 import type { AppConfig, FileKind, Report, Risk } from "@/lib/types";
 import type { Job } from "@/lib/jobs";
@@ -31,7 +32,7 @@ export function Dashboard({config}:{config:AppConfig}) {
   // Product branding: the label stays "GPT-6 Astra" whichever gateway model in the chain answers.
   const engineName="GPT-6 Astra";
   const leave=useLeaveTransition();
-  const [uploadVirusTotal,setUploadVirusTotal]=useState(true),[vtRefreshing,setVTRefreshing]=useState(false);
+  const [uploadVirusTotal,setUploadVirusTotal]=useState(true),[vtRefreshing,setVTRefreshing]=useState(false),[uploadTriage,setUploadTriage]=useState(true);
   const [file,setFile]=useState<File|null>(null),[drag,setDrag]=useState(false),[phase,setPhase]=useState<"idle"|"upload"|"analysis">("idle"),[uploaded,setUploaded]=useState(0),[step,setStep]=useState(0),[error,setError]=useState(""),[warning,setWarning]=useState(""),[reports,setReports]=useState<Report[]>([]),[active,setActive]=useState<Report|null>(null),[historyLoading,setHistoryLoading]=useState(true),[loggingOut,setLoggingOut]=useState(false),[details,setDetails]=useState(false),[copied,setCopied]=useState(false),[jobs,setJobs]=useState<Job[]>([]),[notice,setNotice]=useState("");
   // Jobs submitted from this tab: their report opens automatically if it finishes while the page is open.
   const watched=useRef(new Set<string>()),jobsRef=useRef<Job[]>([]);
@@ -57,7 +58,7 @@ export function Dashboard({config}:{config:AppConfig}) {
   function select(candidate?:File){if(!candidate || busy)return;setError("");setNotice("");const ext=candidate.name.split(".").pop()?.toLowerCase();if(ext==="dmg"){setError("Dukungan DMG coming soon.");return;}if(!["pdf","apk","exe","png","jpg","jpeg"].includes(ext || "")){setError("Pilih file PDF, APK, EXE, PNG, atau JPG.");return;}const limit=config.limits[ext==="jpeg"?"jpg":ext as FileKind];if(!candidate.size || candidate.size>limit){setError(`Batas file ${ext==="pdf"?"PDF":"ini"} adalah ${Math.round(limit/1024/1024)} MB.`);return;}setFile(candidate);setActive(null);setDetails(false);}
   async function analyze(){if(!file || busy || !config.aiReady)return;setError("");setWarning("");setUploaded(0);setStep(0);let path:string|undefined;
     try{let data;if(config.upload!=="direct"){setPhase("upload");const signed=await jsonRequest("/api/uploads",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:file.name,size:file.size})});path=signed.path as string;if(signed.mode==="blob")await upload(path,file,{access:"private",handleUploadUrl:"/api/uploads/blob",multipart:file.size>8*1024*1024,contentType:"application/octet-stream",clientPayload:JSON.stringify({size:file.size}),onUploadProgress:({loaded})=>setUploaded(loaded)}).catch(()=>{throw new Error("Upload gagal atau terputus. Coba pilih file kembali.");});else await uploadFile(signed.signedUrl,file,setUploaded);if(config.jobs){
-        const {job}=await jsonRequest("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path,filename:file.name,uploadVirusTotal:config.virusTotalReady&&uploadVirusTotal})});
+        const {job}=await jsonRequest("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path,filename:file.name,uploadVirusTotal:config.virusTotalReady&&uploadVirusTotal,uploadTriage:sendTriage})});
         // The job owns the uploaded file now; the cleanup below must not delete it.
         path=undefined;watched.current.add(job.id);jobsRef.current=[job,...jobsRef.current];setJobs(jobsRef.current);setFile(null);
         setNotice("Analisis berjalan di server. Anda boleh menutup halaman ini, hasilnya akan muncul di riwayat.");return;
@@ -67,6 +68,11 @@ export function Dashboard({config}:{config:AppConfig}) {
   async function logout(){setLoggingOut(true);try{await jsonRequest("/api/auth/logout",{method:"POST"});await leave();}catch{setError("Logout gagal. Coba lagi.");setLoggingOut(false);}}
   function download(){if(!active)return;const url=URL.createObjectURL(new Blob([JSON.stringify(active,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`kheronyx-${active.sha256.slice(0,12)}.json`;a.click();URL.revokeObjectURL(url);}
   async function copyHash(){if(!active)return;try{await navigator.clipboard.writeText(active.sha256);setCopied(true);setTimeout(()=>setCopied(false),1800);}catch{setWarning("Clipboard tidak tersedia. Salin hash dari detail file.");}}
+  // Tria.ge only runs APK/EXE (opt-in, on by default); PDFs and images never leave for the sandbox.
+  const triageKind=!file || /\.(?:apk|exe)$/i.test(file.name),sendTriage=config.triageReady&&config.jobs&&triageKind&&uploadTriage;
+  // While the open report waits for its sandbox, re-read it every 10 s (the request also resumes due sandbox checks).
+  const waitingId=active&&triageWaiting(active.artifact.triage)?active.id:null;
+  useEffect(()=>{if(!waitingId)return;const timer=setInterval(async()=>{const data=await jsonRequest(`/api/reports?id=${waitingId}`).catch(()=>null);const next=data?.report as Report|undefined;if(!next || next.id!==waitingId)return;setActive(prev=>prev?.id===waitingId && JSON.stringify(prev.artifact.triage)!==JSON.stringify(next.artifact.triage)?next:prev);setReports(prev=>prev.map(r=>r.id===waitingId?next:r));},10000);return ()=>clearInterval(timer);},[waitingId]);
   const flagged=reports.filter(r=>["high","critical"].includes(r.assessment.risk)).length;
   return <div className="dashboard">
     <header className="dashboard-header"><a className="wordmark" href="/"><span className="brand-symbol"><Eye/></span>KHERONYX</a><div className="nav-divider"/><span className="nav-page">File intelligence</span><div className="dashboard-nav-right"><span className={`connection-tag ${config.aiReady?"connected":"pending"}`}><span className="status-dot"/>{config.aiReady?"AI terhubung":"AI belum aktif"}</span><button className="icon-button logout-button" onClick={logout} disabled={loggingOut} aria-label="Logout" title="Logout">{loggingOut?<Loader2 className="spin" size={17}/>:<LogOut size={17}/>}</button></div></header>
@@ -81,6 +87,7 @@ export function Dashboard({config}:{config:AppConfig}) {
         </div>
         <div className="supported-formats">{["pdf","apk","exe","png","jpg"].map(t=><span key={t} className="format-tag">.{t}</span>)}<span className="format-tag format-soon">.dmg<span>coming soon</span></span></div>
         <div className="vt-option"><div className="vt-option-heading"><span><ShieldCheck size={14}/>VirusTotal x {engineName}</span><span className={`connection-tag ${config.virusTotalReady?"connected":"pending"}`}><span className="status-dot"/>{config.virusTotalReady?"Terhubung":"Menunggu koneksi"}</span></div><p>{config.virusTotalReady?"Hash file otomatis dicocokkan dengan hasil antivirus.":"Pemeriksaan antivirus aktif setelah layanan terhubung."}</p><label><input type="checkbox" checked={uploadVirusTotal} onChange={e=>setUploadVirusTotal(e.target.checked)} disabled={busy||!config.virusTotalReady}/>Izinkan scan dengan VirusTotal</label><p>File dikirim hanya jika belum ada di VirusTotal.</p>{config.virusTotalReady&&uploadVirusTotal&&<p className="vt-sharing">File akan dikirim ke VirusTotal dan dapat diakses komunitas serta mitra keamanan mereka. Hindari file rahasia.</p>}</div>
+        {config.triageReady&&config.jobs&&triageKind&&<div className="vt-option"><div className="vt-option-heading"><span><Microscope size={14}/>Sandbox Tria.ge</span><span className="connection-tag connected"><span className="status-dot"/>Terhubung</span></div><p>APK/EXE dijalankan di sandbox Tria.ge untuk melihat server yang dihubungi. Laporan utama tidak menunggu; hasil sandbox menyusul.</p><label><input type="checkbox" checked={uploadTriage} onChange={e=>setUploadTriage(e.target.checked)} disabled={busy}/>Kirim ke sandbox Tria.ge</label><p>Analisis publik yang sudah ada dipakai ulang tanpa upload.</p>{uploadTriage&&<p className="vt-sharing">Sampel di akun peneliti Tria.ge dapat dilihat publik. Hindari file rahasia.</p>}</div>}
         {busy&&<div className="analysis-progress" role="status" aria-live="polite"><div className="progress-heading"><span><Loader2 size={15} className="spin"/>{phase==="upload"?"Mengunggah file…":config.virusTotalReady?"Memeriksa VirusTotal dan AI…":"Menganalisis file…"}</span><span className="progress-amount">{phase==="upload"&&file?<>{transferLabel(uploaded,file.size)} <strong>{percent}%</strong></>:"Mohon tunggu"}</span></div><div className={`progress-track ${phase==="analysis"?"indeterminate":""}`}><span style={{width:phase==="upload"?`${percent}%`:"35%"}}/></div><div className="scan-steps">{["Upload","Bedah struktur",config.virusTotalReady?"VT · AI":"Penilaian AI"].map((s,i)=><span key={s} className={i<=step?"current":""}>{i<step?<Check size={12}/>:<span className="step-dot"/>}{s}</span>)}</div></div>}
         {error&&<div className="error-notice" role="alert"><CircleAlert size={17}/><span>{error}</span><button className="icon-button" aria-label="Tutup pesan" onClick={()=>setError("")}><X size={14}/></button></div>}
         <button className="button button-dark analyze-button" onClick={analyze} disabled={!file || busy || !config.aiReady}>{busy?<Loader2 size={17} className="spin"/>:<ScanLine size={17}/>} {busy?"Analisis berlangsung…":"Mulai analisis"}{!busy&&<ArrowRight size={16}/>}</button>
@@ -97,6 +104,7 @@ export function Dashboard({config}:{config:AppConfig}) {
         <ImpactPanel report={active}/>
         <EndpointPanel report={active}/>
         <VirusTotalPanel result={active.artifact.virusTotal} sandbox={active.artifact.sandbox} ready={config.virusTotalReady} busy={vtRefreshing} onRefresh={refreshVirusTotal}/>
+        <TriagePanel result={active.artifact.triage}/>
         <ThreatIntelPanel result={active.artifact.threatIntel}/>
         <div className="report-columns"><div className="report-findings"><h3><Activity size={16}/>Temuan utama<span className="count-label">{active.assessment.findings.length}</span></h3>{active.assessment.findings.length?active.assessment.findings.map((finding,i)=><div className="finding" key={i}><span className={`finding-dot risk-${finding.severity}`}/><div><h4>{finding.title}</h4><p>{finding.explanation}</p><div className="finding-evidence"><Fingerprint size={12}/><code>{finding.evidence}</code></div></div></div>):<div className="no-findings"><Check size={17}/><p>Tidak ada temuan mencurigakan pada bukti yang diperiksa. Ini belum menjamin seluruh file aman.</p></div>}</div><div className="report-recommendations"><h3><ShieldCheck size={16}/>Langkah berikutnya</h3>{active.assessment.recommendations.map((r,i)=><div className="recommendation" key={i}><span>{String(i+1).padStart(2,"0")}</span><p>{r}</p></div>)}<div className="confidence-note"><Info size={14}/><span>Keyakinan interpretasi: <strong>{({low:"rendah",medium:"sedang",high:"tinggi"})[active.assessment.confidence]}</strong></span></div></div></div>
         <div className="report-limits"><h3><Info size={15}/>Batas pemeriksaan</h3><ul>{active.assessment.limitations.map((l,i)=><li key={i}>{l}</li>)}</ul></div>

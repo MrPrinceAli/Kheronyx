@@ -23,6 +23,8 @@ export async function GET(request:Request) {
   }
   // Finished and failed jobs only matter for a few days; their reports live in kheronyx_reports.
   await supabase.from("kheronyx_jobs").delete().in("status",["done","failed"]).lt("updated_at",new Date(Date.now()-7*24*3600*1000).toISOString());
+  // Finished Tria.ge sandbox checks (the digest lives in the report); a missing table only returns an error.
+  await supabase.from("kheronyx_sandbox").delete().in("status",["done","failed"]).lt("updated_at",new Date(Date.now()-7*24*3600*1000).toISOString());
   const {error:reportError}=await supabase.from("kheronyx_reports").delete().lt("created_at",new Date(Date.now()-30*24*3600*1000).toISOString());
   return NextResponse.json({deleted,reportRetentionOk:!reportError});
 }

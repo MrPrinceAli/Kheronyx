@@ -6,6 +6,7 @@ import { blobSize, quarantinePath } from "@/lib/blob";
 import { fileKind } from "@/lib/extract";
 import { KIND_LIMITS } from "@/lib/limits";
 import { createJob, jobsConfigured, kick, listJobs, runnable } from "@/lib/jobs";
+import { kickSandbox, sandboxDue, triageKind, triageReady } from "@/lib/sandbox";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 // after() keeps running the analysis for up to this long once the response is sent.
@@ -22,7 +23,7 @@ export async function POST(request:Request) {
     const kind=fileKind(filename);if(!path.endsWith(`.${kind}`))throw new Error("Referensi upload tidak valid.");
     const size=await blobSize(path);if(!size)throw new Error("File belum terunggah. Upload ulang.");
     if(size>KIND_LIMITS[kind])throw new Error("File melebihi batas untuk format ini.");
-    const job=await createJob({path,filename,kind,size,uploadVirusTotal:body.uploadVirusTotal===true});
+    const job=await createJob({path,filename,kind,size,uploadVirusTotal:body.uploadVirusTotal===true,uploadTriage:body.uploadTriage===true && triageReady() && triageKind(kind)});
     kick(job.id);
     return NextResponse.json({job},{status:202});
   } catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Analisis gagal dijadwalkan."},{status:400});}
@@ -34,6 +35,8 @@ export async function GET() {
     const jobs=await listJobs();
     // Opening the dashboard also resumes work whose retry time has come, even without the scheduler.
     if(jobs.some(runnable))kick();
+    // Due Tria.ge sandbox checks are resumed the same way.
+    if(await sandboxDue().catch(()=>false))kickSandbox();
     return NextResponse.json({jobs},{headers:{"Cache-Control":"no-store"}});
   } catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Status analisis gagal dimuat."},{status:503});}
 }

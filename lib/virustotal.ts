@@ -161,16 +161,16 @@ export async function inspectVirusTotal(artifact: Artifact, buffer: Buffer, uplo
 // One request through the same client/quota; Windows summaries list hundreds of files/registry keys, so the size cap is
 // larger than for reputation, but only a compact, noise-filtered digest is kept. Never throws.
 const BEHAVIOUR_MAX = 4 * 1024 * 1024, MAX_CONTACTED = 20, MAX_MITRE = 12, MAX_TAGS = 15, MAX_SANDBOX_HOSTS = 8;
-// Sandbox noise beyond lib/hosts.ts BENIGN: OS connectivity checks, vendor telemetry/CDNs, certificate status, time sync.
+// Sandbox noise beyond lib/hosts.ts BENIGN (shared with lib/triage.ts): OS connectivity checks, vendor telemetry/CDNs, certificate status, time sync.
 const NOISE = ["tenor.com", "ggpht.com", "googlevideo.com", "googletagmanager.com", "gvt1.com", "gvt2.com", "gvt3.com", "pki.goog", "msftconnecttest.com", "msftncsi.com", "msn.com", "bing.com", "bing.net", "msedge.net", "office.net", "office365.com", "microsoftonline.com", "msauth.net", "msftauth.net", "skype.com", "s-microsoft.com", "xboxlive.com", "akamai.net", "akamaiedge.net", "akamaitechnologies.com", "edgekey.net", "edgesuite.net", "aaplimg.com", "apple-dns.net", "mzstatic.com", "mozilla.net", "ntp.org", "nist.gov", "usertrust.com", "comodoca.com", "entrust.net", "identrust.com", "lencr.org", "amazontrust.com", "godaddy.com"];
 // Google/Microsoft/Apple corporate ranges (not their cloud-customer ranges): sandbox IPs without a DNS answer there are OS traffic.
 const VENDOR_NETS = ["64.233.160.0/19", "66.102.0.0/20", "66.249.64.0/19", "72.14.192.0/18", "74.125.0.0/16", "108.177.0.0/17", "142.250.0.0/15", "172.217.0.0/16", "172.253.0.0/16", "173.194.0.0/16", "192.178.0.0/15", "209.85.128.0/17", "216.58.192.0/19", "216.239.32.0/19", "13.107.0.0/16", "131.253.0.0/16", "150.171.0.0/16", "204.79.197.0/24", "17.0.0.0/8"].map(n => { const [ip, bits] = n.split("/"); return [num(ip), Number(bits)] as const; });
 // DNS, DHCP, NTP, NetBIOS, SSDP, mDNS/LLMNR: infrastructure chatter, not a server the file chose.
-const NOISE_PORTS = new Set([53, 67, 68, 123, 137, 138, 1900, 5353, 5355]);
+export const NOISE_PORTS = new Set([53, 67, 68, 123, 137, 138, 1900, 5353, 5355]);
 function num(ip: string) { return ip.split(".").reduce((n, o) => n * 256 + Number(o), 0); }
-const vendorIp = (ip: string) => VENDOR_NETS.some(([base, bits]) => Math.floor(num(ip) / 2 ** (32 - bits)) === Math.floor(base / 2 ** (32 - bits)));
+export const vendorIp = (ip: string) => VENDOR_NETS.some(([base, bits]) => Math.floor(num(ip) / 2 ** (32 - bits)) === Math.floor(base / 2 ** (32 - bits)));
 // Also sandbox-network names (wpad/isatap probes, *.localdomain) that never leave the analysis VM.
-const noisyHost = (h: string) => !publicHost(h) || under(h, NOISE) || /^(?:ocsp|crl)\d*\.|^(?:wpad|isatap)\.|\.(?:localdomain|workgroup|mshome\.net)$/.test(h);
+export const noisyHost = (h: string) => !publicHost(h) || under(h, NOISE) || /^(?:ocsp|crl)\d*\.|^(?:wpad|isatap)\.|\.(?:localdomain|workgroup|mshome\.net)$/.test(h);
 const SEVERITY = { IMPACT_SEVERITY_INFO: "info", IMPACT_SEVERITY_LOW: "low", IMPACT_SEVERITY_MEDIUM: "medium", IMPACT_SEVERITY_HIGH: "high" } as const;
 const RANK = { info: 0, low: 1, medium: 2, high: 3 };
 type Severity = typeof SEVERITY[keyof typeof SEVERITY];

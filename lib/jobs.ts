@@ -4,11 +4,12 @@ import { db, saveReport, storageConfigured } from "./db";
 import { blobConfigured, readBlob, removeBlob } from "./blob";
 import { KIND_LIMITS } from "./limits";
 import { analyzeBuffer, PermanentError, type AnalysisStage } from "./pipeline";
+import { pendingTriage, runDueSandbox, startTriage, triageKind, triageReady } from "./sandbox";
 import type { FileKind } from "./types";
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
 export type Job = {id: string; createdAt: string; filename: string; kind: FileKind; size: number; status: JobStatus; stage: AnalysisStage | null; attempts: number; retryAt: string | null; error: string | null; reportId: string | null};
-type Row = {id: string; created_at: string; path: string; filename: string; kind: FileKind; size: number; upload_virustotal: boolean; status: JobStatus; stage: AnalysisStage | null; attempts: number; locked_until: string | null; error: string | null; report_id: string | null};
+type Row = {id: string; created_at: string; path: string; filename: string; kind: FileKind; size: number; upload_virustotal: boolean; upload_triage?: boolean; status: JobStatus; stage: AnalysisStage | null; attempts: number; locked_until: string | null; error: string | null; report_id: string | null};
 
 export const MAX_ATTEMPTS = 5;
 // Longer than the 300 s function limit, so a job whose worker was killed becomes claimable again.
@@ -29,9 +30,12 @@ const advance = async (id: string, stage: AnalysisStage) => {
   if (!data?.length) throw new CancelledError();
 };
 
-export async function createJob(input: {path: string; filename: string; kind: FileKind; size: number; uploadVirusTotal: boolean}) {
+export async function createJob(input: {path: string; filename: string; kind: FileKind; size: number; uploadVirusTotal: boolean; uploadTriage?: boolean}) {
   const id = randomUUID();
-  const {data, error} = await client().from(TABLE).insert({id, path: input.path, filename: input.filename.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 180), kind: input.kind, size: input.size, upload_virustotal: input.uploadVirusTotal}).select().single();
+  const fields: Record<string, unknown> = {id, path: input.path, filename: input.filename.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 180), kind: input.kind, size: input.size, upload_virustotal: input.uploadVirusTotal};
+  let {data, error} = await client().from(TABLE).insert(input.uploadTriage ? {...fields, upload_triage: true} : fields).select().single();
+  // Sandbox opt-in must never block the analysis (e.g. before migration 202610150001 adds upload_triage).
+  if (error && input.uploadTriage) ({data, error} = await client().from(TABLE).insert(fields).select().single());
   if (error || !data) throw new Error("Analisis belum dapat dijadwalkan. Coba lagi.");
   return toJob(data as Row);
 }
@@ -78,9 +82,14 @@ async function runClaimed(row: Row): Promise<number | null> {
     // The report reuses the job id, so a retry after a crash overwrites instead of duplicating.
     const report = await analyzeBuffer(buffer, row.filename, row.upload_virustotal, {id: row.id, onStage: stage => advance(row.id, stage)});
     await advance(row.id, "save");
+    // Opt-in Tria.ge sandbox (APK/EXE): the report is saved and shown first; the submission (search, else upload,
+    // ≤ ~60 s) runs before the quarantine copy is deleted and can never fail the analysis.
+    const sandbox = row.upload_triage === true && triageReady() && triageKind(row.kind);
+    if (sandbox) report.artifact.triage = pendingTriage();
     await saveReport(report);
     await update(row.id, {status: "done", stage: null, locked_until: null, error: null, report_id: report.id});
-    await removeBlob(row.path).catch(() => {});
+    const {keepBlob} = sandbox ? await startTriage(report, buffer, row.path) : {keepBlob: false};
+    if (!keepBlob) await removeBlob(row.path).catch(() => {});
     return null;
   } catch (error) {
     if (error instanceof CancelledError) return null;
@@ -105,11 +114,13 @@ export function kick(id?: string) {
   after(async () => {
     try {
       for (;;) {
-        const row = await claim(id); if (!row) return;
+        const row = await claim(id); if (!row) break;
         const retryAt = await runClaimed(row);
-        if (!retryAt || retryAt - started > 90_000) return;
+        if (!retryAt || retryAt - started > 90_000) break;
         await new Promise(resolve => setTimeout(resolve, Math.max(0, retryAt - Date.now()) + 500));
       }
+      // Sandbox checks that came due (e.g. a reused Tria.ge analysis) while time is left in this invocation.
+      await runDueSandbox(started);
     } catch (error) { console.error("Kheronyx job runner failed:", error instanceof Error ? error.message : error); }
   });
 }
