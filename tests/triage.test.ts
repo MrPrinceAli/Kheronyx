@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FIRST_CHECK_MS, INTERVAL_MS, RATE_RETRY_MS, applyTriageIndicators, checkTriage, configHosts, expire, mask, mergeTriageHosts, normalizeOverview, submitTriage, type TriageOptions } from "../lib/triage";
+import { FIRST_CHECK_MS, INTERVAL_MS, RATE_RETRY_MS, applyTriageIndicators, checkTriage, configHosts, expire, findSiblings, mask, mergeTriageHosts, normalizeOverview, sameCert, siblingContacts, submitTriage, type TriageOptions } from "../lib/triage";
 import { finishTriage, mergeIntel } from "../lib/sandbox";
 import type { Artifact, Assessment, Report, ThreatIntelResult, TriageResult } from "../lib/types";
 
@@ -27,12 +27,13 @@ async function withTriage(route: Route, run: (options: TriageOptions, calls: Cal
 const path = (c: Call) => c.url.replace("https://tria.ge/api/v0", "");
 const iso = (t: number) => new Date(t).toISOString();
 const search = (rows: object[]) => Response.json({data: rows, next: "x"});
+const sampleState = (over: object = {}) => ({id: ID, status: "reported", kind: "file", tasks: [{id: "static1", status: "reported"}, {id: "behavioral1", status: "reported"}], ...over});
 const row = (over: object = {}) => ({id: ID, status: "reported", kind: "file", filename: `${sha256}.apk`, submitted: "2026-07-03T09:00:00Z", completed: "2026-07-03T09:05:00Z", sha256, ...over});
 
 test("search reuses an existing public analysis without uploading; archives containing the file do not count", async () => {
-  await withTriage(() => search([row({id: "260706-bb3hwsgy8z", filename: `${sha256}.zip`, sha256: "a".repeat(64)}), row({id: "260601-oldoldoldo", completed: "2026-06-01T00:00:00Z"}), row()]), async (options, calls) => {
+  await withTriage(c => path(c).startsWith("/samples/") ? Response.json(sampleState()) : search([row({id: "260706-bb3hwsgy8z", filename: `${sha256}.zip`, sha256: "a".repeat(64)}), row({id: "260601-oldoldoldo", completed: "2026-06-01T00:00:00Z"}), row()]), async (options, calls) => {
     const {result, retryUpload} = await submitTriage({sha256, kind: "apk", buffer: Buffer.from("PK")}, undefined, options);
-    assert.deepEqual(calls.map(path), [`/search?query=sha256%3A${sha256}`]);
+    assert.deepEqual(calls.map(path), [`/search?query=sha256%3A${sha256}`, `/samples/${ID}`]);
     assert.equal(result.status, "running"); assert.equal(result.sampleId, ID); assert.equal(result.reused, true); assert.equal(result.url, `https://tria.ge/${ID}`);
     assert.equal(result.nextCheck, iso(T0)); assert.equal(retryUpload, false); assert.match(result.message || "", /tanpa mengunggah/);
   });
@@ -41,10 +42,64 @@ test("search reuses an existing public analysis without uploading; archives cont
     const {result} = await submitTriage({sha256, kind: "apk", buffer: Buffer.from("PK")}, undefined, options);
     assert.equal(result.status, "running"); assert.equal(result.reused, true); assert.equal(result.nextCheck, iso(T0 + FIRST_CHECK_MS));
   });
-  // Same SHA-256 already submitted by an earlier Kheronyx report: no request at all.
-  await withTriage(() => { throw new Error("must not be called"); }, async (options, calls) => {
+  // Same SHA-256 already submitted by an earlier Kheronyx report: only its status is read, no search or upload.
+  await withTriage(() => Response.json(sampleState()), async (options, calls) => {
     const {result} = await submitTriage({sha256, kind: "apk", buffer: Buffer.from("PK"), known: ID}, undefined, options);
-    assert.equal(calls.length, 0); assert.equal(result.sampleId, ID); assert.equal(result.reused, true);
+    assert.deepEqual(calls.map(path), [`/samples/${ID}`]); assert.equal(result.sampleId, ID); assert.equal(result.reused, true);
+  });
+  // ...and while that sample is still running it is reused even though no behavioural task has started yet.
+  await withTriage(() => Response.json(sampleState({status: "running", tasks: [{id: "static1", status: "reported"}]})), async (options, calls) => {
+    const {result} = await submitTriage({sha256, kind: "apk", buffer: Buffer.from("PK"), known: ID}, undefined, options);
+    assert.equal(calls.length, 1); assert.equal(result.reused, true); assert.equal(result.nextCheck, iso(T0 + FIRST_CHECK_MS));
+  });
+});
+
+test("an APK whose finished analysis never ran it is sent again with explicit Android profiles", async () => {
+  const NEW = "261015-ffd4baft81";
+  await withTriage(({init}) => init?.method === "POST" ? Response.json({id: NEW, status: "pending", kind: "file"}) : Response.json(sampleState({tasks: [{id: "static1", status: "reported"}]})), async (options, calls) => {
+    const {result} = await submitTriage({sha256, kind: "apk", buffer: Buffer.from("PK"), known: ID}, undefined, options);
+    assert.deepEqual(calls.map(c => `${c.init?.method || "GET"} ${path(c)}`), [`GET /samples/${ID}`, "POST /samples"]);
+    const json = JSON.parse(String((calls[1].init?.body as FormData).get("_json")));
+    assert.deepEqual(json.profiles.map((p: {profile: {tags: string[]}}) => p.profile.tags[0]), ["os:android-14-x64", "os:android-11-x64"]);
+    assert.equal(result.sampleId, NEW); assert.equal(result.reused, false); assert.match(result.message || "", /dikirim ulang/);
+  });
+  // Without the file (blob already removed) the static-only analysis is reused as before.
+  await withTriage(() => search([row()]), async (options, calls) => {
+    const {result} = await submitTriage({sha256, kind: "apk"}, undefined, options);
+    assert.equal(calls.length, 1); assert.equal(result.sampleId, ID);
+  });
+});
+
+test("sibling samples: same certificate first, only samples that ran, emulator and platform noise dropped", async () => {
+  const cert = {subject: "CN=dpt", issuer: "CN=dpt", validFrom: "2024-11-05T12:52:39.000Z", validTo: "2049-10-30T12:52:39.000Z"};
+  const staticReport = (subject: string, nb = "2024-11-05T12:52:39Z") => ({files: [{selected: true, metadata: {code_sign: {certificates: [{subject, issuer: subject, not_before: nb, not_after: "2049-10-30T12:52:39Z"}]}}}]});
+  assert.equal(sameCert(staticReport("CN=dpt"), cert), true);
+  assert.equal(sameCert(staticReport("CN=dpt", "2024-11-06T12:52:39Z"), cert), false);
+  assert.equal(sameCert(staticReport("CN=other"), cert), false);
+  const overview = (target: string, ran: boolean, domains: string[], urls: string[] = []) => ({sample: {target}, tasks: {[`x-static1`]: {kind: "static", status: "reported"}, ...ran ? {"x-behavioral1": {kind: "behavioral", status: "reported"}} : {}}, targets: [{iocs: {domains, urls}}]});
+  const noisy = overview("eTaxMobile.apk", true, ["ping.gqvnwss.top", "chrome.cloudflare-dns.com", "android.apis.google.com", "raw.githubusercontent.com"], ["http://nwp.t-mobile.com/getcpid", "https://raw.githubusercontent.com/o8g4q/i/main/l"]);
+  assert.deepEqual(siblingContacts(noisy).map(c => c.url || c.host), ["https://raw.githubusercontent.com/o8g4q/i/main/l", "ping.gqvnwss.top"]);
+  const rows = [row({id: "260911-k2s7ksdn5x", sha256: "b".repeat(64), submitted: "2026-09-11T09:06:11Z"}), row({id: "260708-k8cs6sex6p", sha256: "c".repeat(64), submitted: "2026-07-08T09:15:53Z"}), row({id: "260611-whka4sat5y", sha256: "d".repeat(64), submitted: "2026-06-11T00:00:00Z"}), row()];
+  const route = (c: Call) => {
+    const p = path(c);
+    if (p.startsWith("/search")) return search(rows);
+    if (p === "/samples/260911-k2s7ksdn5x/overview.json") return Response.json(overview("IdentitasKependudukanDigital.apk", true, ["ping.ynrkone.top"]));
+    if (p === "/samples/260708-k8cs6sex6p/overview.json") return Response.json(noisy);
+    if (p === "/samples/260611-whka4sat5y/overview.json") return Response.json(overview("VSSID.apk", false, ["static-only.top"]));
+    if (p === "/samples/260911-k2s7ksdn5x/reports/static") return Response.json(staticReport("CN=someone"));
+    if (p === "/samples/260708-k8cs6sex6p/reports/static") return Response.json(staticReport("CN=dpt"));
+    throw new Error(`unexpected ${p}`);
+  };
+  await withTriage(route, async (options, calls) => {
+    const out = await findSiblings({family: "bankbot_ynrk", sha256, cert}, options);
+    assert.equal(decodeURIComponent(path(calls[0])), "/search?query=family:bankbot_ynrk");
+    assert.deepEqual(out.map(x => [x.name, x.match]), [["eTaxMobile.apk", "cert"], ["IdentitasKependudukanDigital.apk", "family"]]);
+    assert.ok(!calls.some(c => path(c).includes(sha256)), "the file itself is not its own sibling");
+  });
+  // Debug/AOSP public keys never link samples.
+  await withTriage(route, async options => {
+    const out = await findSiblings({family: "bankbot_ynrk", sha256, cert: {...cert, subject: "C=US, O=Android, CN=Android Debug"}}, options);
+    assert.ok(out.every(x => x.match === "family"));
   });
 });
 

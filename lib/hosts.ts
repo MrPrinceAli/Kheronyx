@@ -36,6 +36,13 @@ const EDGES: [string, string[]][] = [
 const ipNum = (ip: string) => ip.split(".").reduce((n, o) => n * 256 + Number(o), 0);
 const inCidr = (ip: string, cidr: string) => { const [base, bits] = cidr.split("/"), size = 2 ** (32 - Number(bits)); return Math.floor(ipNum(ip) / size) === Math.floor(ipNum(base) / size); };
 export const edgeNetwork = (ip: string) => ipv4(ip) ? EDGES.find(([, nets]) => nets.some(n => inCidr(ip, n)))?.[0] : undefined;
+// Alibaba Cloud Log Service default project "log-service-<account UID>-<region>": the account number identifies the
+// cloud customer that receives the data (Alibaba can name the owner on an abuse/police request).
+const ALIYUN_REGION: Record<string, string> = {"ap-southeast-5": "Jakarta", "ap-southeast-1": "Singapura", "ap-southeast-3": "Kuala Lumpur", "ap-southeast-6": "Manila", "ap-southeast-7": "Bangkok", "cn-hongkong": "Hong Kong"};
+export function cloudAccount(host: string) {
+  const m = host.match(/^log-service-(\d{8,20})-([a-z0-9-]{4,30})\.(?:[a-z0-9-]+\.)?log\.aliyuncs\.com$/);
+  return m ? {provider: "Alibaba Cloud", account: m[1], region: ALIYUN_REGION[m[2]] || m[2]} : undefined;
+}
 export const validPort = (p: string | number | undefined) => p !== undefined && p !== "" && Number.isInteger(Number(p)) && Number(p) >= 1 && Number(p) <= 65535;
 export function hostOf(value: string) {
   try { return new URL(/^[a-z][\w+.-]*:\/\//i.test(value) ? value : `http://${value}`).hostname.toLowerCase().replace(/\.$/, ""); } catch { return ""; }

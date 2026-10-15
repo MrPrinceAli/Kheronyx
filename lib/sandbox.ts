@@ -4,7 +4,7 @@ import { blobConfigured, readBlob, removeBlob } from "./blob";
 import { db, readReport, storageConfigured, updateReport } from "./db";
 import { KIND_LIMITS } from "./limits";
 import { applyThreatIntel, inspectThreatIntel, type ThreatIntelOptions } from "./threat-intel";
-import { TRIAGE_KINDS, applyTriageIndicators, checkTriage, mergeTriageHosts, submitTriage, triageConfigured, type TriageOptions } from "./triage";
+import { TRIAGE_KINDS, applyTriageIndicators, checkTriage, findSiblings, mergeTriageHosts, submitTriage, triageConfigured, type TriageOptions } from "./triage";
 import type { FileKind, Report, ThreatIntelResult, TriageResult } from "./types";
 
 // Durable Tria.ge polling (kheronyx_sandbox): the analysis job submits or reuses a sample (≤ 60 s, before the quarantine
@@ -32,12 +32,21 @@ export function mergeIntel(old: ThreatIntelResult | undefined, fresh: ThreatInte
   return out;
 }
 
-export type FinishDeps = {assess?: typeof defaultAssess; threatIntel?: ThreatIntelOptions; inspect?: typeof inspectThreatIntel; budgetMs?: number; now?: () => number};
+export type FinishDeps = {assess?: typeof defaultAssess; threatIntel?: ThreatIntelOptions; inspect?: typeof inspectThreatIntel; siblings?: typeof findSiblings; budgetMs?: number; now?: () => number};
+type Cert = {subject?: string; issuer?: string; validFrom?: string; validTo?: string};
+// Once per report: earlier builds of the same family (same signing certificate first) that Tria.ge did run (≤ 25 s).
+async function withSiblings(report: Report, triage: TriageResult, find: typeof findSiblings, now: number): Promise<TriageResult> {
+  const family = triage.family?.[0]; if (!family || triage.siblingsCheckedAt) return triage;
+  const cert = (report.artifact.metadata.signing as {certificates?: Cert[]} | undefined)?.certificates?.[0];
+  const siblings = await find({family, sha256: report.sha256, cert: cert?.subject ? {subject: cert.subject, issuer: cert.issuer, validFrom: cert.validFrom, validTo: cert.validTo} : undefined}, {signal: AbortSignal.timeout(25_000)}).catch(() => undefined);
+  return siblings ? {...triage, siblings: siblings.length ? siblings : undefined, siblingsCheckedAt: new Date(now).toISOString()} : triage;
+}
 // Applies a sandbox result to a report. Only a reported digest changes evidence: hosts merged, indicators added, new
 // hosts checked (≤ 15 s), then the AI re-assesses the enriched artifact. If the AI fails the earlier verdict stays.
-export async function finishTriage(report: Report, triage: TriageResult, {assess = defaultAssess, threatIntel, inspect = inspectThreatIntel, budgetMs = 200_000, now = Date.now}: FinishDeps = {}): Promise<Report> {
+export async function finishTriage(report: Report, triage: TriageResult, {assess = defaultAssess, threatIntel, inspect = inspectThreatIntel, siblings = findSiblings, budgetMs = 200_000, now = Date.now}: FinishDeps = {}): Promise<Report> {
   const artifact = structuredClone(report.artifact); artifact.triage = triage;
   if (triage.status !== "reported") return {...report, artifact};
+  const started = now(); artifact.triage = triage = await withSiblings(report, triage, siblings, started); budgetMs -= now() - started;
   const added = mergeTriageHosts(artifact);
   applyTriageIndicators(artifact);
   if (added.length) {

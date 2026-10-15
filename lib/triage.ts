@@ -4,7 +4,7 @@ import { rateLimit } from "./db";
 import { redactSecrets } from "./behaviors";
 import { DOMAIN, SHARED, hostOf, ipv4, publicHost, publicIpv4, under } from "./hosts";
 import { NOISE_PORTS, noisyHost, vendorIp } from "./virustotal";
-import type { Artifact, FileKind, SandboxContact, TriageConfig, TriageResult, TriageStatus } from "./types";
+import type { Artifact, FileKind, SandboxContact, TriageConfig, TriageResult, TriageSibling, TriageStatus } from "./types";
 
 // Tria.ge (Hatching Triage) cloud API v0: hash search (reuse a public analysis without uploading), opt-in upload of
 // APK/EXE, status polling, overview.json (score, family, extracted malware configs, IOCs, signatures) and the dynamic
@@ -161,6 +161,8 @@ function iocContacts(iocs: Record<string, unknown>, ctx: Contacts, dynamic: bool
   if (!dynamic) for (const ip of strs(iocs.ips, 100, 64)) if (!noisyIp(ip, ctx.served) && ![...ctx.map.values()].some(c => c.ip === ip)) addContact(ctx.map, ip, {kind: "ip", ip});
 }
 
+// overview.json lists tasks as an array or as an object keyed by "<sample>-<task>".
+const overviewTasks = (o: Record<string, unknown>) => (Array.isArray(o.tasks) ? o.tasks : Object.entries(rec(o.tasks)).map(([k, v]) => ({...rec(v), name: rec(v).name ?? k.split("-").pop()}))).slice(0, 20).map(rec);
 // ---- overview.json → compact, noise-filtered digest. `dynamic` = parsed report_triage.json bodies (optional).
 const GENERIC_TAG = /^(?:android|windows|linux|macos|family:.*)$/i;
 export function normalizeOverview(body: unknown, sha256?: string, dynamic: unknown[] = []) {
@@ -194,7 +196,7 @@ export function normalizeOverview(body: unknown, sha256?: string, dynamic: unkno
   // HTTP first, then connections, then bare DNS lookups (same order as the VirusTotal sandbox digest).
   const contacted = [...ctx.map.values()].sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]).slice(0, MAX_CONTACTED);
   // Behavioural tasks: which ones can provide a dynamic report, the OS they ran on, and why they did not run.
-  const tasks = (Array.isArray(o.tasks) ? o.tasks : Object.entries(rec(o.tasks)).map(([k, v]) => ({...rec(v), name: rec(v).name ?? k.split("-").pop()}))).slice(0, 20).map(rec).filter(t => t.kind === "behavioral");
+  const tasks = overviewTasks(o).filter(t => t.kind === "behavioral");
   const behavioral = tasks.filter(t => t.status === "reported").map(t => clean(t.name, 20)).filter(n => /^behavioral\d{1,2}$/.test(n));
   const platforms = [...new Set(tasks.map(t => clean(t.os ?? t.platform, 40)).filter(Boolean))].slice(0, 4);
   const blind = tasks.length > 0 && !behavioral.length;
@@ -223,13 +225,21 @@ export async function searchSample(api: Client, sha256: string): Promise<Found |
   const active = rows.find(r => !["reported", "failed"].includes(r.status));
   const pick = done || active; return pick ? {id: pick.id, status: mapStatus(pick.status)} : null;
 }
+// Triage's automatic profile choice sometimes stops an APK after static analysis (no behavioural run at all), so APKs
+// ask for two Android VMs explicitly (both run ARM and x86 code).
+const APK_PROFILES = ["os:android-14-x64", "os:android-11-x64"].map(tag => ({profile: {tags: [tag], network: "internet"}, pick: "sample"}));
 async function upload(api: Client, buffer: Buffer, sha256: string, kind: FileKind) {
   const form = new FormData(), filename = `${sha256}.${kind}`;
-  form.append("_json", JSON.stringify({kind: "file", interactive: false, target: filename}));
+  form.append("_json", JSON.stringify({kind: "file", interactive: false, target: filename, ...kind === "apk" ? {profiles: APK_PROFILES} : {}}));
   form.append("file", new Blob([new Uint8Array(buffer)], {type: "application/octet-stream"}), filename);
   const r = sampleRow.safeParse(await api.request("/samples", {method: "POST", body: form}, 256 * 1024, 60_000));
   if (!r.success) throw new TriageError("error", "Respons pengiriman Tria.ge tidak valid.");
   return {id: r.data.id, status: mapStatus(r.data.status)};
+}
+// Status and number of behavioural tasks of a sample (0 = static analysis only).
+async function sampleState(api: Client, id: string) {
+  const body = rec(await api.request(`/samples/${id}`));
+  return {status: mapStatus(clean(body.status, 40)), behavioral: arr(body.tasks, 30).map(rec).filter(t => /^behavioral\d{1,2}$/.test(clean(t.id, 20))).length};
 }
 const iso = (t: number) => new Date(t).toISOString();
 // A result still waiting after TIMEOUT_MS (counted from the first submission) becomes final.
@@ -250,15 +260,18 @@ export async function submitTriage(input: {sha256: string; kind: FileKind; buffe
   const api = client(options);
   const reuse = (found: Found, message: string): Submission => ({result: {...base, status: found.status === "reported" ? "running" : found.status, sampleId: found.id, url: triagePage(found.id), reused: true, message, nextCheck: found.status === "reported" ? at : iso(now + FIRST_CHECK_MS)}, retryUpload: false});
   try {
-    // Same file already sent by an earlier Kheronyx report: never submit a SHA-256 twice.
-    if (input.known && SAMPLE_ID.test(input.known)) return reuse({id: input.known, status: "running"}, "File ini sudah pernah dikirim ke Tria.ge; hasil yang sama dipakai ulang.");
-    const found = await searchSample(api, input.sha256);
-    if (found) return reuse(found, found.status === "reported" ? "Analisis publik Tria.ge untuk file ini sudah ada; hasilnya dipakai tanpa mengunggah ulang." : "File ini sedang dianalisis di Tria.ge; hasilnya dipakai tanpa mengunggah ulang.");
+    // Same file already sent by an earlier Kheronyx report (or analysed publicly): reused, unless that finished analysis
+    // of an APK never ran it (static only) and the file is still here to send again with explicit Android profiles.
+    const known = input.known && SAMPLE_ID.test(input.known) ? input.known : "";
+    const state = known ? await sampleState(api, known).catch(() => ({status: "running" as TriageStatus, behavioral: 1})) : undefined;
+    const found = known ? {id: known, status: state!.status} : await searchSample(api, input.sha256);
+    const staticOnly = Boolean(found?.status === "reported" && input.kind === "apk" && input.buffer && (state ?? await sampleState(api, found.id)).behavioral === 0);
+    if (found && !staticOnly) return reuse(found, known ? "File ini sudah pernah dikirim ke Tria.ge; hasil yang sama dipakai ulang." : found.status === "reported" ? "Analisis publik Tria.ge untuk file ini sudah ada; hasilnya dipakai tanpa mengunggah ulang." : "File ini sedang dianalisis di Tria.ge; hasilnya dipakai tanpa mengunggah ulang.");
     if (!input.buffer) return {result: {...base, status: "skipped", message: "File belum ada di Tria.ge dan salinannya sudah dihapus; tidak dikirim."}, retryUpload: false};
     if (input.buffer.length > UPLOAD_MAX) return {result: {...base, status: "skipped", message: "File belum ada di Tria.ge dan terlalu besar (di atas 100 MB) untuk dikirim otomatis."}, retryUpload: false};
     if (!await api.submitGate()) return {result: {...base, status: "rate_limited", message: `Batas ${dailyLimit()} kiriman sandbox per hari tercapai; file ini tidak dikirim ke Tria.ge.`}, retryUpload: false};
     const sample = await upload(api, input.buffer, input.sha256, input.kind);
-    return {result: {...base, status: sample.status === "reported" ? "running" : sample.status, sampleId: sample.id, url: triagePage(sample.id), reused: false, message: undefined, nextCheck: iso(now + (sample.status === "reported" ? 0 : FIRST_CHECK_MS))}, retryUpload: false};
+    return {result: {...base, status: sample.status === "reported" ? "running" : sample.status, sampleId: sample.id, url: triagePage(sample.id), reused: false, message: staticOnly ? "Analisis Tria.ge sebelumnya tidak menjalankan file ini; file dikirim ulang agar dijalankan di Android." : undefined, nextCheck: iso(now + (sample.status === "reported" ? 0 : FIRST_CHECK_MS))}, retryUpload: false};
   } catch (error) {
     const e = error instanceof TriageError ? error : new TriageError("error", "Tria.ge belum dapat dihubungi.");
     const limited = e.status === "rate_limited";
@@ -295,6 +308,47 @@ export async function checkTriage(previous: TriageResult, sha256: string, option
   }
 }
 
+// ---- sibling samples: other public samples of the same family. Operators rotate domains per build and packed APKs
+// often stay silent in a sandbox, so earlier builds that did run (preferably signed with the same certificate) show the
+// infrastructure behind the campaign. Bounded: 1 search + up to SIBLING_SCAN overviews + their static reports.
+const SIBLING_SCAN = 6, MAX_SIBLINGS = 4, SIBLING_CONTACTS = 8;
+export type SiblingInput = {family: string; sha256: string; cert?: {subject?: string; issuer?: string; validFrom?: string; validTo?: string}};
+const second = (v: unknown) => { const t = Date.parse(clean(v, 40)); return Number.isFinite(t) ? Math.floor(t / 1000) : undefined; };
+// Same subject, issuer and validity to the second: the same signing certificate in practice (Triage reports no thumbprint).
+export function sameCert(staticReport: unknown, cert: NonNullable<SiblingInput["cert"]>) {
+  const files = arr(rec(staticReport).files, 20).map(rec), file = files.find(f => f.selected === true) ?? files[0];
+  const c = rec(arr(rec(rec(rec(file).metadata).code_sign).certificates, 5)[0]);
+  const norm = (v: unknown) => clean(v, 300).replace(/\s+/g, "").toLowerCase();
+  return Boolean(cert.subject && norm(c.subject) === norm(cert.subject) && (!cert.issuer || norm(c.issuer) === norm(cert.issuer)) && second(c.not_before) !== undefined && second(c.not_before) === second(cert.validFrom) && (!cert.validTo || second(c.not_after) === second(cert.validTo)));
+}
+// Public (debug/AOSP test) keys are shared by unrelated authors: never a link between samples.
+const publicCert = (subject = "") => /Android Debug|android@android\.com/i.test(subject);
+export function siblingContacts(overview: unknown) {
+  const o = rec(overview), ctx: Contacts = {map: new Map(), served: new Map()};
+  for (const t of arr(o.targets, 20).map(rec)) iocContacts(rec(t.iocs), ctx, true);
+  iocContacts(rec(rec(o.sample).iocs), ctx, true);
+  // A bare lookup of a shared platform (raw.githubusercontent.com) says nothing; its exact URL (a dead drop) does.
+  return [...ctx.map.values()].filter(c => c.kind === "http" || !c.host || !under(c.host, SHARED)).sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]).slice(0, SIBLING_CONTACTS);
+}
+export async function findSiblings(input: SiblingInput, options: TriageOptions = {}): Promise<TriageSibling[]> {
+  if (!triageConfigured() || !/^[\w.-]{2,40}$/.test(input.family)) return [];
+  const api = client(options), cert = input.cert && !publicCert(input.cert.subject) ? input.cert : undefined;
+  const body = rec(await api.request(`/search?query=${encodeURIComponent(`family:${input.family}`)}`));
+  const rows = arr(body.data, 50).flatMap(x => { const r = sampleRow.safeParse(x); return r.success && r.data.status === "reported" && r.data.kind !== "url" && r.data.sha256?.toLowerCase() !== input.sha256 ? [r.data] : []; })
+    .sort((a, b) => (Date.parse(b.submitted || "") || 0) - (Date.parse(a.submitted || "") || 0)).slice(0, SIBLING_SCAN);
+  const out = await Promise.all(rows.map(async (row): Promise<TriageSibling | null> => {
+    const overview = rec(await api.request(`/samples/${row.id}/overview.json`, {}, OVERVIEW_MAX).catch(() => null));
+    // Only samples that were actually run: static IOCs are strings, not observed connections.
+    const ran = overviewTasks(overview).some(t => t.kind === "behavioral" && t.status === "reported");
+    const contacted = ran ? siblingContacts(overview) : [];
+    if (!contacted.length) return null;
+    const match = cert && sameCert(await api.request(`/samples/${row.id}/reports/static`, {}, REPORT_MAX).catch(() => null), cert) ? "cert" as const : "family" as const;
+    const name = clean(rec(overview.sample).target, 80);
+    return defined({sampleId: row.id, url: triagePage(row.id), name: name && !/^[a-f0-9]{32,}/i.test(name) ? name : undefined, submitted: clean(row.submitted, 40) || undefined, match, contacted});
+  }));
+  return out.filter(x => x !== null).sort((a, b) => Number(b.match === "cert") - Number(a.match === "cert")).slice(0, MAX_SIBLINGS);
+}
+
 // ---- report merge
 const MAIL = ["gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com", "office365.com", "aol.com", "icloud.com", "yandex.ru", "yandex.com", "mail.ru", "zoho.com", "gmx.com", "gmx.net", "protonmail.com", "proton.me"];
 // Hosts from extracted configs (C2 first, then exfiltration servers that are not shared mail providers); shared
@@ -327,6 +381,8 @@ export function applyTriageIndicators(artifact: Artifact) {
     const fam = t.family?.length ? `, famili ${t.family.join("/")}` : "";
     if (t.score !== undefined && t.score >= 6) out.push({name: `Sandbox Tria.ge menilai ${t.score >= 8 ? "berbahaya" : "mencurigakan"} (skor ${t.score}/10${fam})`, evidence: `Tria.ge (sandbox publik pihak ketiga) memberi skor ${t.score}/10${fam}${t.tags?.length ? `; tag: ${t.tags.slice(0, 8).join(", ")}` : ""}${t.signatures?.length ? `; perilaku: ${t.signatures.slice(0, 4).map(s => s.name).join("; ")}` : ""}.`.slice(0, 400)});
     const c2 = (t.configs ?? []).filter(c => c.c2.length || c.credentials?.length);
+    const twins = (t.siblings ?? []).filter(x => x.contacted.length), certTwins = twins.filter(x => x.match === "cert");
+    if (twins.length) out.push({name: `Sandbox Tria.ge: ${twins.length} sampel kembaran${certTwins.length ? ` (${certTwins.length} bersertifikat sama)` : ""} menghubungi server kampanye`, evidence: twins.map(x => `${x.name || x.sampleId}${x.match === "cert" ? " [sertifikat sama]" : ""}: ${x.contacted.slice(0, 4).map(c => c.host || c.ip).join(", ")}`).join("; ").slice(0, 400)});
     if (c2.length) out.push({name: `Konfigurasi malware diekstrak sandbox Tria.ge (${[...new Set(c2.map(c => c.family))].join("/")})`, evidence: c2.map(c => `${c.family}: ${[...c.c2, ...(c.credentials ?? []).map(x => `${x.protocol ? `${x.protocol}://` : ""}${x.host ?? ""}${x.username ? ` (akun ${x.username})` : ""}`)].slice(0, 6).join(", ")}${c.botnet ? `; botnet ${c.botnet}` : ""}`).join("; ").slice(0, 400)});
   }
   artifact.indicators = [...out, ...artifact.indicators.filter(i => !TRIAGE_INDICATORS.test(i.name))];

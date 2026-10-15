@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Check, ChevronDown, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
-import type { Report, SandboxContact } from "@/lib/types";
+import type { Report, SandboxContact, TriageSibling } from "@/lib/types";
 import type { Endpoint } from "@/lib/endpoints";
-import { edgeNetwork, hostOf, registrableDomain } from "@/lib/hosts";
+import { cloudAccount, edgeNetwork, hostOf, registrableDomain } from "@/lib/hosts";
 import panel from "./virus-total.module.css";
 import styles from "./trace.module.css";
 import { Collapsible, chevronClass } from "./collapsible";
@@ -46,7 +46,7 @@ function Row({tag, label, value, note, danger, edge}: {tag: string; label: strin
 // Telegram bot/chat ids, the signer identity the author typed into the certificate, its fingerprint, the package name and
 // malware family. Addresses are plain text, never links.
 export function EndpointPanel({report}: {report: Report}) {
-  const [showAll, setShowAll] = useState(false), [showOthers, setShowOthers] = useState(false);
+  const [showAll, setShowAll] = useState(false), [showOthers, setShowOthers] = useState(false), [showTwins, setShowTwins] = useState(false);
   const m = report.artifact.metadata as Record<string, unknown>, intel = report.artifact.threatIntel;
   const list = Array.isArray(m.endpoints) ? m.endpoints.filter(valid).slice(0, 25) : [];
   // Hosts/IPs the VirusTotal and Tria.ge sandboxes saw the file contact at runtime (noise-filtered server-side), merged
@@ -72,7 +72,20 @@ export function EndpointPanel({report}: {report: Report}) {
   const malware = family || (tReady && Array.isArray(triage.family) ? triage.family.join(", ") : "");
   const hits = Boolean(intel?.malwareBazaar) || Boolean(intel?.urlhaus.length) || Boolean(intel?.threatfox.length);
   const suspect = report.assessment.risk === "high" || report.assessment.risk === "critical" || hits || tReady && ((triage.score ?? 0) >= 8 || tConfigs.some(c => c.c2.length));
-  if (!list.length && !configs.length && !contacted.length && !c2s.length && !(suspect && (cert || signer || bots.length || chats.length))) return null;
+  // Earlier builds of the same family that Tria.ge did run (same certificate first): their servers, per address.
+  const twins = tReady && Array.isArray(triage.siblings) ? triage.siblings.filter((x): x is TriageSibling => Boolean(x) && typeof x.sampleId === "string" && Array.isArray(x.contacted)).slice(0, 4) : [];
+  const twinHosts = new Map<string, {value: string; host: string; by: TriageSibling[]}>();
+  for (const x of twins) for (const c of x.contacted.filter(contact)) {
+    const host = c.host || c.ip!, old = twinHosts.get(host);
+    if (old) { if (!old.by.includes(x)) old.by.push(x); } else twinHosts.set(host, {value: c.url || host, host, by: [x]});
+  }
+  // Cloud accounts that receive the data (Alibaba Cloud Log Service project = account UID), from any observed host.
+  const accounts = new Map<string, {provider: string; account: string; region: string; samples: number}>();
+  for (const [host, n] of [...contacted.map(c => [c.host || "", 1] as const), ...[...twinHosts.values()].map(t => [t.host, t.by.length] as const)]) {
+    const a = cloudAccount(host); if (!a) continue;
+    const old = accounts.get(a.account); accounts.set(a.account, {...a, samples: (old?.samples ?? 0) + n});
+  }
+  if (!list.length && !configs.length && !contacted.length && !c2s.length && !twinHosts.size && !(suspect && (cert || signer || bots.length || chats.length))) return null;
 
   const notes = (e: Endpoint) => {
     if (!intel) return [];
@@ -117,6 +130,16 @@ export function EndpointPanel({report}: {report: Report}) {
   // contacts, the rest, and shared CDN edge IPs last.
   const confirmed = (e: Endpoint) => seen(e) || inConfig(e.host), shared = (host: string) => Boolean(edgeNetwork(host)) && !inConfig(host);
   const own = statics.filter(e => !shared(e.host)), ownExtra = extra.filter(c => c.host || !shared(c.ip!));
+  const month = (iso?: string) => { const t = Date.parse(iso || ""); return Number.isFinite(t) ? new Date(t).toLocaleDateString("id-ID", {month: "short", year: "numeric", timeZone: "UTC"}) : ""; };
+  const twinName = (x: TriageSibling) => `${x.name || x.sampleId}${month(x.submitted) ? ` (${month(x.submitted)})` : ""}`;
+  const sameAuthor = twins.some(x => x.match === "cert");
+  const twinRows = [...twinHosts.values()].filter(t => !list.some(e => e.host === t.host) && !contacted.some(c => c.host === t.host || c.ip === t.host))
+    .sort((a, b) => Number(b.by.some(x => x.match === "cert")) - Number(a.by.some(x => x.match === "cert")) || b.by.length - a.by.length)
+    .map(t => {
+      const same = t.by.filter(x => x.match === "cert"), kin = t.by.filter(x => x.match !== "cert"), acct = cloudAccount(t.host);
+      const who = [same.length ? `${same.map(twinName).join(", ")} (sertifikat sama dengan file ini)` : "", kin.length ? `${kin.map(twinName).join(", ")} (keluarga malware sama)` : ""].filter(Boolean).join(" dan ");
+      return <Row key={`twin:${t.host}`} tag="SAMPEL KEMBARAN" danger={suspect && same.length > 0} label={`${acct ? `Penampung data di ${acct.provider} · ` : ""}Dihubungi ${who} di sandbox Tria.ge`} value={t.value} note={notes({value: t.value, host: t.host, kind: "panel", source: "triage"}).join(" · ") || undefined}/>; });
+  const onlyShared = !configOnly.length && !own.length && !ownExtra.length;
   const servers = [...configOnly.map(extracted), ...own.filter(confirmed).map(row), ...ownExtra.map(runtime), ...own.filter(e => !confirmed(e)).map(row), ...extra.filter(c => !ownExtra.includes(c)).map(runtime), ...statics.filter(e => shared(e.host)).map(row)];
   const id = cert?.subject ? subject(cert.subject) : {}, debug = /Android Debug/i.test(cert?.subject || "");
   // The public AOSP test/platform keys (android@android.com, Mountain View) ship with the Android source: anyone can sign
@@ -138,12 +161,19 @@ export function EndpointPanel({report}: {report: Report}) {
       {cert?.sha256 && <Row tag={borrowed ? "SIDIK JARI SERTIFIKAT" : "SIDIK JARI PELAKU"} danger={!borrowed} label={borrowed ? "Kunci umum yang dipakai banyak pembuat aplikasi, jadi tidak bisa menghubungkan file ke pelaku yang sama" : `SHA-256 sertifikat${cert.validFrom ? `, dibuat ${cert.validFrom.slice(0, 10)}` : ""}: sama berarti pembuat sama`} value={cert.sha256}/>}
       {bots.map(b => <Row key={b} tag="BOT PELAKU" danger label="ID bot Telegram (token disamarkan)" value={b}/>)}
       {chats.map(c => <Row key={c} tag="CHAT PELAKU" danger label="chat_id Telegram penerima data curian" value={c}/>)}
+      {[...accounts.values()].map(a => <Row key={a.account} tag="AKUN CLOUD PELAKU" danger label={`Nomor akun ${a.provider} (region ${a.region}) yang menampung data dari aplikasi; ${a.provider} bisa mengungkap pemiliknya atas permintaan resmi${a.samples > 1 ? ` · dipakai ${a.samples} sampel` : ""}`} value={a.account}/>)}
       {pkg && <Row tag="NAMA PAKET" label="Identitas aplikasi di Android" value={pkg}/>}
       {malware && <Row tag="KELUARGA MALWARE" danger label={family ? "Menurut abuse.ch" : "Menurut sandbox Tria.ge"} value={malware}/>}
     </div>}
-    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{servers.slice(0, VISIBLE)}
+    {!!servers.length && <div className={styles.group}><h4>{onlyShared ? "Koneksi saat diuji" : suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{servers.slice(0, VISIBLE)}
       {servers.length > VISIBLE && <><Collapsible open={showAll}>{servers.slice(VISIBLE)}</Collapsible>
         <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? "Tampilkan lebih sedikit" : `Lihat semua (${servers.length})`}<ChevronDown size={13} className={chevronClass(showAll)}/></button></>}
+    </div>}
+    {!!twinRows.length && <div className={styles.group}><h4>Server dari sampel kembaran<span className={styles.count}>{twinRows.length}</span></h4>
+      <p className={styles.hint}>{sameAuthor ? "Versi lain dari pembuat yang sama (ditandatangani sertifikat yang sama)" : "Sampel lain dari keluarga malware yang sama"} sudah dijalankan di sandbox Tria.ge dan menghubungi alamat ini. Pelaku biasanya mengganti domain di tiap versi, jadi belum tentu file ini memakai alamat yang persis sama.</p>
+      {twinRows.slice(0, VISIBLE + 1)}
+      {twinRows.length > VISIBLE + 1 && <><Collapsible open={showTwins}>{twinRows.slice(VISIBLE + 1)}</Collapsible>
+        <button type="button" className={styles.more} aria-expanded={showTwins} onClick={() => setShowTwins(!showTwins)}>{showTwins ? "Tampilkan lebih sedikit" : `Lihat semua (${twinRows.length})`}<ChevronDown size={13} className={chevronClass(showTwins)}/></button></>}
     </div>}
     {!!configs.length && <div className={styles.group}><h4>Konfigurasi terenkripsi yang berhasil dibuka<span className={styles.count}>{configs.length}</span></h4>
       {configs.map(c => <Row key={`${c.via}:${c.plaintext}`} tag={`DIDEKRIPSI (${c.algorithm.toUpperCase()})`} danger={suspect} label={`Dibuka dengan kunci yang tertanam di ${app} (${c.keySource}) · ${c.via}`} value={c.plaintext}/>)}

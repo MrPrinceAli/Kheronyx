@@ -46,7 +46,11 @@ export type TriageResult = {
   score?: number; family?: string[]; tags?: string[]; configs?: TriageConfig[]; contacted?: SandboxContact[];
   signatures?: {name: string; score?: number; description?: string; label?: string; ttp?: string[]}[];
   platforms?: string[]; message?: string; nextCheck?: string; reassessedAt?: string;
+  // Other public Tria.ge samples of the same family (same signing certificate first) that did run, with the servers
+  // they contacted: the operator's infrastructure when this file itself stayed silent or was not run.
+  siblings?: TriageSibling[]; siblingsCheckedAt?: string;
 };
+export type TriageSibling = {sampleId: string; url?: string; name?: string; submitted?: string; match: "cert" | "family"; contacted: SandboxContact[]};
 export const assessmentSchema = z.object({
   risk: z.enum(riskLevels),
   confidence: z.enum(["low", "medium", "high"]),
