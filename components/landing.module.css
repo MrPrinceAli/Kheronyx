@@ -112,6 +112,17 @@
   transition: color .2s, border-color .2s;
 }
 
+.page :global(.footer-badge) {
+  margin-left: 3px;
+  padding: 1px 5px;
+  border: 1px solid #c9d6cf;
+  border-radius: 4px;
+  color: var(--green);
+  font-size: 7px;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+}
+
 .page :global(.footer-intel a:hover) {
   color: #16191d;
   border-color: #16191d;
@@ -178,8 +189,11 @@
 
   .page :global(.footer-credits) {
     flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
     align-items: center;
-    gap: 12px;
+    gap: 4px 12px;
+    max-width: 100%;
   }
 }
 
