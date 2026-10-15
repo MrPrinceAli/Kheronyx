@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { AppWindow, ArrowRight, Eye as EyeIcon, EyeOff, FileImage, FileText, HardDrive, Image as ImageIcon, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
+import { AppWindow, ArrowRight, Eye as EyeIcon, EyeOff, FileImage, FileText, FlaskConical, HardDrive, Image as ImageIcon, Loader2, LockKeyhole, ScanLine, ShieldCheck } from "lucide-react";
 import { Eye } from "./eye";
 import { useAccessTransition } from "./access-transition";
 import { TypedHandle } from "./typed-handle";
@@ -36,7 +36,7 @@ export function Landing() {
       </div>
       <div className="hero-copy">
         <div className="eyebrow hero-features">
-          <span className="hero-feature"><ScanLine size={12} strokeWidth={1.5} aria-hidden="true"/>STATIC INTELLIGENCE</span>
+          <span className="hero-feature"><FlaskConical size={12} strokeWidth={1.5} aria-hidden="true"/>TRIA.GE<span className="footer-badge">Researcher</span></span>
           <span className="hero-feature-divider" aria-hidden="true">·</span>
           <span className="hero-feature hero-feature-ai"><img className="hero-feature-logo" src="/openai.svg" width={12} height={12} alt="" aria-hidden="true"/>GPT-6 Astra Assisted</span>
         </div>
@@ -50,6 +50,6 @@ export function Landing() {
         </div></div>
       </div>
     </main>
-    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> ONE FILE. A CLOSER LOOK.</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><div className="footer-credits"><span className="footer-intel">THREAT INTEL{intelSources.map(([name,href],i)=><span key={name}>{i?" · ":" "}<a href={href} target="_blank" rel="noopener noreferrer">{name}</a></span>)}</span><span className="footer-intel">SANDBOX <a href="https://tria.ge" target="_blank" rel="noopener noreferrer">Tria.ge</a> <span className="footer-badge">Researcher</span></span><span className="footer-copyright">© 2026 Kheronyx</span></div></footer>
+    <footer className="landing-footer"><span className="footer-note"><ScanLine size={14}/> STATIC INTELLIGENCE</span><div className="format-row">{fileFormats.map(({extension,Icon})=><span className="format-tag" key={extension}><Icon size={13} aria-hidden="true"/>.{extension}</span>)}<span className="format-tag format-soon"><HardDrive size={13} aria-hidden="true"/>.dmg <span>coming soon</span></span></div><div className="footer-credits"><span className="footer-intel">THREAT INTEL{intelSources.map(([name,href],i)=><span key={name}>{i?" · ":" "}<a href={href} target="_blank" rel="noopener noreferrer">{name}</a></span>)}</span><span className="footer-intel">SANDBOX <a href="https://tria.ge" target="_blank" rel="noopener noreferrer">Tria.ge</a> <span className="footer-badge">Researcher</span></span><span className="footer-copyright">© 2026 Kheronyx</span></div></footer>
   </div>;
 }
