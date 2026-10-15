@@ -1,7 +1,7 @@
 import type { Artifact, Assessment, Report, SandboxResult, VirusTotalResult } from "./types";
 
 const findingTitle = "Hasil engine antivirus VirusTotal";
-const baselineLimit = "VirusTotal: hasil antivirus dapat mengandung false positive; nol deteksi bukan jaminan bebas malware.";
+const baselineLimit = "VirusTotal: antivirus bisa keliru, dan nol deteksi bukan jaminan aman.";
 
 export function applyVirusTotalEvidence(assessment: Assessment, artifact: Artifact): Assessment {
   const result = artifact.virusTotal; if (!result) return assessment;
@@ -17,7 +17,7 @@ export function applyVirusTotalEvidence(assessment: Assessment, artifact: Artifa
   }
   next.limitations.push(baselineLimit);
   const scored = stats.malicious + stats.suspicious + stats.harmless + stats.undetected;
-  if (!scored) next.limitations.push("VirusTotal: tidak ada engine yang memberikan penilaian untuk tipe file ini.");
+  if (!scored) next.limitations.push("VirusTotal: belum ada antivirus yang menilai jenis file ini.");
   const flagged = stats.malicious + stats.suspicious;
   if (flagged) {
     const severity = stats.malicious ? "high" : "medium";
@@ -41,7 +41,7 @@ export function updateVirusTotalReport(report: Report, result: VirusTotalResult)
   if (result.sha256 !== report.sha256) throw new Error("Hasil VirusTotal tidak cocok dengan file laporan.");
   const artifact = { ...report.artifact, virusTotal: result };
   const assessment = applyVirusTotalEvidence(report.assessment, artifact);
-  assessment.limitations = [...new Set([...assessment.limitations, "VirusTotal: hasil diperbarui; penjelasan AI tetap berasal dari analisis awal."])];
+  assessment.limitations = [...new Set([...assessment.limitations, "VirusTotal: hasil antivirus diperbarui; penjelasan AI masih dari analisis awal."])];
   return { ...report, artifact, assessment };
 }
 

@@ -48,7 +48,7 @@ export async function finishTriage(report: Report, triage: TriageResult, {assess
   }
   try {
     const {assessment, model} = await assess(artifact, {budgetMs});
-    assessment.limitations = [...new Set([...assessment.limitations.filter(l => !l.startsWith("Sandbox Tria.ge:")), "Sandbox Tria.ge: penilaian diperbarui dengan bukti sandbox publik pihak ketiga; Kheronyx sendiri tidak menjalankan file."])].slice(0, 12);
+    assessment.limitations = [...new Set([...assessment.limitations.filter(l => !l.startsWith("Sandbox Tria.ge:")), "Sandbox Tria.ge: penilaian sudah diperbarui dengan hasil saat file dijalankan di Tria.ge (bukan di Kheronyx)."])].slice(0, 12);
     artifact.triage = {...triage, reassessedAt: new Date(now()).toISOString()};
     return {...report, artifact, assessment, model};
   } catch {

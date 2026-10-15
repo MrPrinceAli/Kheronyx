@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import AdmZip from "adm-zip";
 import { createSession, validateSession, verifyPassword } from "../lib/auth";
 import { extractFile, fileKind } from "../lib/extract";
-import { parseAssessment } from "../lib/ai";
+import { parseAssessment, INCOMPLETE_NOTE } from "../lib/ai";
 import { readZip, unzipEntry } from "../lib/zip";
 import type { Artifact } from "../lib/types";
 process.env.ACCESS_PASSWORD="test-only-password";process.env.SESSION_SECRET="a-test-secret-long-enough-for-session-signing";delete process.env.ACCESS_PASSWORD_HASH;
@@ -38,5 +38,5 @@ test("ZIP decompression is bounded even if central directory size is forged",()=
   const zip=new AdmZip();zip.addFile("AndroidManifest.xml",Buffer.alloc(2*1024*1024,65));const buffer=zip.toBuffer();const central=buffer.indexOf(Buffer.from([0x50,0x4b,0x01,0x02]));buffer.writeUInt32LE(100,central+24);const entries=readZip(buffer);assert.throws(()=>unzipEntry(buffer,entries[0],1024));
 });
 const artifact:Artifact={filename:"sample.png",kind:"png",size:42,sha256:"a".repeat(64),metadata:{},strings:[],urls:[],indicators:[],limitations:["No sandbox"],incomplete:true};
-test("incomplete extraction forces unknown risk even when AI claims low risk",()=>{const result=parseAssessment(JSON.stringify({risk:"low",confidence:"high",summary:"Example",findings:[],recommendations:["Review"],limitations:["Example"]}),artifact);assert.equal(result.risk,"unknown");assert.equal(result.confidence,"low");assert.ok(result.limitations.includes("No sandbox"));});
+test("incomplete extraction forces unknown risk even when AI claims low risk",()=>{const result=parseAssessment(JSON.stringify({risk:"low",confidence:"high",summary:"Example",findings:[],recommendations:["Review"],limitations:["Example"]}),artifact);assert.equal(result.risk,"unknown");assert.equal(result.confidence,"low");assert.ok(result.limitations.includes(INCOMPLETE_NOTE));assert.ok(!result.limitations.includes("No sandbox"),"technical parser limitations stay in the artifact");assert.ok(result.limitations.length<=5);});
 test("rejects invalid model output rather than inventing a report",()=>{assert.throws(()=>parseAssessment('{"summary":"safe"}',artifact));assert.throws(()=>parseAssessment("malformed response",artifact));});
