@@ -17,10 +17,11 @@
 <img src="https://img.shields.io/badge/Supabase-Postgres%20%2B%20pg__cron-3FCF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase"/>
 <img src="https://img.shields.io/badge/Vercel-Blob%20%2B%20Functions-000?style=flat-square&logo=vercel" alt="Vercel"/>
 <br/>
-<img src="https://img.shields.io/badge/tests-95%20passing-2ea44f?style=flat-square&logo=checkmarx&logoColor=white" alt="95 tests passing"/>
+<img src="https://img.shields.io/badge/tests-116%20passing-2ea44f?style=flat-square&logo=checkmarx&logoColor=white" alt="116 tests passing"/>
 <img src="https://img.shields.io/badge/false%20alarms%20on%20F--Droid-0%2F19-2ea44f?style=flat-square&logo=android&logoColor=white" alt="0 of 19 legitimate apps falsely flagged"/>
 <img src="https://img.shields.io/badge/VirusTotal-integrated-394EFF?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal"/>
 <img src="https://img.shields.io/badge/abuse.ch-threat%20intel-c0392b?style=flat-square" alt="abuse.ch"/>
+<img src="https://img.shields.io/badge/Tria.ge-researcher%20sandbox-1f8a5b?style=flat-square" alt="Tria.ge researcher sandbox"/>
 <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license"/>
 <img src="https://img.shields.io/badge/made%20in-Indonesia%20🇮🇩-red?style=flat-square" alt="Made in Indonesia"/>
 
@@ -49,6 +50,7 @@ Kheronyx lets anyone **look inside a file before opening it**. It takes the file
 | 🕵️ **Built for scam APKs** | Detects SMS/OTP stealers, Telegram-bot exfiltration, accessibility-abusing banking trojans, overlays, hidden icons, droppers and ~19 Android packers. |
 | 🧬 **Knows who called what** | Decoded call sites tell app code from libraries, e.g. *"`SmsReceiver.onReceive` reads SMS **and** sends it to the panel"*. |
 | 🧩 **Sees through tricks** | BadPack ZIP headers, empty `classes.dex`, zeroed manifest headers, XOR/base64/char-array string hiding, repackaged APKs (v2/v3 signature verification). |
+| 🧪 **Sandbox (Tria.ge Researcher + VirusTotal)** | Opted-in APK/EXE files are looked up or submitted to the Tria.ge sandbox in the background; extracted malware configs (real C2 servers such as SpyNote's `ip:7771`, AgentTesla's SMTP/FTP drop accounts) and observed connections are merged into the report, checked against abuse.ch, and the AI re-assesses the verdict. VirusTotal's sandbox behaviour adds observed connections and MITRE ATT&CK techniques for known files. |
 | 🛰️ **Threat intelligence** | VirusTotal reputation, abuse.ch **MalwareBazaar / URLhaus / ThreatFox** lookups, and **RDAP** domain age for every server found inside the file. |
 | 🧑‍🤝‍🧑 **Made for non-experts** | Every report translates technical findings into plain consequences (*"can read your OTP codes and drain your account"*) plus emergency steps if the app was already installed. |
 | 🤖 **AI verdict, with guardrails** | A schema-validated LLM report that must cite extracted evidence. Missing evidence can never produce a "safe" verdict. |
@@ -126,6 +128,8 @@ flowchart LR
     X --> AB[abuse.ch<br/>MalwareBazaar · URLhaus · ThreatFox]
     X --> RD[RDAP<br/>domain age]
     VT & AB & RD --> AI[🤖 AI assessment<br/>schema-validated]
+    AI --> TG[🧪 Tria.ge sandbox<br/>reuse or submit, poll]
+    TG -. configs · connections .-> AI
     AI --> R[(Report)]
     W -. delete .-> B
     C([⏰ pg_cron · every minute]) -. retry stalled jobs .-> W
@@ -196,6 +200,7 @@ npm run dev
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Reports, jobs, rate limits |
 | `VIRUSTOTAL_API_KEY` | Hash reputation (optional upload) |
 | `ABUSE_CH_AUTH_KEY` | MalwareBazaar, URLhaus, ThreatFox ([free key](https://auth.abuse.ch)) |
+| `TRIAGE_API_KEY`, `TRIAGE_API_URL` | Tria.ge sandbox (researcher accounts: samples are public) |
 | `CRON_SECRET`, `JOBS_SECRET` | Daily maintenance and the per-minute job scheduler |
 
 Apply the SQL in [`supabase/migrations`](supabase/migrations) to your project. The scheduler migration explains the shared Vault secret it needs.
@@ -204,7 +209,7 @@ Apply the SQL in [`supabase/migrations`](supabase/migrations) to your project. T
 
 ```sh
 npm run typecheck
-npm test            # 95 tests: parsers, fuzzing, signing, jobs, threat intel, calibration
+npm test            # 116 tests: parsers, fuzzing, signing, jobs, threat intel, calibration
 npm run build
 
 # Detection accuracy on real samples (never executed, stored read-only in .corpus/)
@@ -238,7 +243,7 @@ Kheronyx is a research and awareness tool. Static analysis can miss malware that
 
 ## 🙏 Acknowledgements
 
-[VirusTotal](https://www.virustotal.com) · [abuse.ch](https://abuse.ch) (MalwareBazaar, URLhaus, ThreatFox) · [RDAP](https://about.rdap.org) · [PDF.js](https://mozilla.github.io/pdf.js/) · [Vercel](https://vercel.com) · [Supabase](https://supabase.com)
+[Tria.ge](https://tria.ge) (Researcher program) · [VirusTotal](https://www.virustotal.com) · [abuse.ch](https://abuse.ch) (MalwareBazaar, URLhaus, ThreatFox) · [RDAP](https://about.rdap.org) · [PDF.js](https://mozilla.github.io/pdf.js/) · [Vercel](https://vercel.com) · [Supabase](https://supabase.com)
 
 <div align="center">
 
