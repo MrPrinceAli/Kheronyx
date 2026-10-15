@@ -175,7 +175,7 @@ function peParse(buffer: Buffer, a: Artifact) {
   if(net?.obfuscators.length)a.limitations.push(`Kode .NET diobfuskasi (${net.obfuscators.join(", ")}); nama dan string asli bisa tersembunyi.`);
   if(id.installer)a.limitations.push(`Installer ${id.installer}: payload di dalam installer tidak dibongkar dan tidak diperiksa; program yang dipasang bisa berbeda dari yang terlihat.`);
   if(id.script)a.limitations.push(`Isi ${id.script} di dalam file tidak dibongkar atau didekompilasi.`);
-  a.limitations.push("Program tidak dijalankan. Import function dibaca dari tabel import statis (API yang diresolusi saat runtime tidak terlihat); sertifikat Authenticode hanya dibaca tanpa verifikasi tanda tangan; reputasi penerbit dan isi packed/encrypted belum diverifikasi.");
+  a.limitations.push("Kheronyx tidak menjalankan program. Import function dibaca dari tabel import statis (API yang diresolusi saat berjalan tidak terlihat); hash isi dicocokkan dengan tanda tangan Authenticode, tetapi rantai sertifikat dan reputasi penerbit tidak diverifikasi; isi packed/encrypted hanya terlihat lewat sandbox bila tersedia.");
 }
 // All classes*.dex are parsed one at a time (each ≤64 MB inflated, released before the next) within a shared
 // 20 s / 768 MB budget, so a 250 MB APK stays well inside the function limits. Bytecode decoding (call sites,
@@ -330,7 +330,7 @@ function apkParse(buffer: Buffer, a: Artifact) {
   a.strings=[...sig.samples(),...a.strings]; a.urls.push(...urls.slice(0,60));
   if(skipped.length)a.limitations.push(`${skipped.length} file DEX tidak dibedah karena batas waktu/ukuran analisis; perilaku di dalamnya bisa terlewat.`);
   if(bytecode.incomplete && stats.length)a.limitations.push(`Analisis bytecode (pemanggil API, string tersamar) tidak lengkap untuk ${bytecode.incomplete} DEX karena batas waktu/struktur; asal pemanggilan sebagian API tidak diketahui.`);
-  a.limitations.push("APK tidak dijalankan. Bytecode hanya dibedah statis (pemanggil API sensitif, string tersamar sederhana), tidak didekompilasi penuh; kode yang didekripsi/diunduh saat runtime tidak terlihat. Library native hanya dibaca simbol dan string-nya. Tanda tangan v2/v3 diverifikasi kriptografis (integritas isi, bukan identitas penerbit); v1 hanya dibaca sertifikatnya. Izin luas bukan bukti malware.");
+  a.limitations.push("Kheronyx tidak menjalankan APK. Bytecode dibedah statis (pemanggil API sensitif, string tersamar, konfigurasi terenkripsi bila kuncinya tertanam), tidak didekompilasi penuh; kode atau alamat yang baru diunduh/didekripsi saat berjalan hanya terlihat lewat sandbox bila tersedia. Library native hanya dibaca simbol dan string-nya. Tanda tangan v2/v3 diverifikasi kriptografis (integritas isi, bukan identitas penerbit); v1 hanya dibaca sertifikatnya. Izin luas bukan bukti malware.");
 }
 const PDF_TOKENS:[string,string][]=[["JavaScript|JS","JavaScript tertanam"],["OpenAction","Tindakan saat dibuka"],["AA","Tindakan otomatis (/AA)"],["Launch","Tindakan launch (membuka program/file)"],["EmbeddedFiles?","File tertanam"],["SubmitForm","Formulir mengirim data (/SubmitForm)"],["ImportData","Impor data eksternal (/ImportData)"],["RichMedia","Konten RichMedia/Flash"],["XFA","Formulir XFA"]];
 type PdfRaw={launch:string[];submit:string[];openJs:string[];uris:string[];files:string[];acroForm:boolean;uriTokens:number};
@@ -421,7 +421,7 @@ export async function extractFile(buffer:Buffer,filename:string):Promise<Artifac
   a.strings=[...new Set(a.strings.map(redactSecrets))].slice(0,500);
   a.urls=[...new Set([...a.urls,...a.strings.flatMap(s=>s.match(/https?:\/\/[^\s<>"'\\]{4,300}/g)||[])].map(redactSecrets))].slice(0,60);
   a.indicators=a.indicators.map(i=>({name:i.name,evidence:redactSecrets(i.evidence)}));
-  a.limitations.push("Ini analisis statis berbantuan AI tanpa sandbox eksekusi; reputasi hanya dari VirusTotal dan abuse.ch bila tersedia. Malware baru dan payload tersembunyi dapat terlewat.");
+  a.limitations.push("Kheronyx sendiri tidak menjalankan file: bagian ini analisis statis berbantuan AI. Perilaku saat berjalan hanya diketahui bila sandbox VirusTotal atau Tria.ge punya hasil untuk file ini; reputasi dari VirusTotal dan abuse.ch. Malware baru dan payload tersembunyi dapat terlewat.");
   let sampled=false;
   function bounded(value:unknown,depth=0):unknown {
     if(depth>7){sampled=true;return "[Depth limit]";}
