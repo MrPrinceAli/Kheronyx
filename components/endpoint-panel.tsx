@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Check, ChevronDown, ChevronUp, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
+import { Check, ChevronDown, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
 import type { Report, SandboxContact } from "@/lib/types";
 import type { Endpoint } from "@/lib/endpoints";
 import { hostOf, registrableDomain } from "@/lib/hosts";
 import panel from "./virus-total.module.css";
 import styles from "./trace.module.css";
+import { Collapsible, chevronClass } from "./collapsible";
 
 const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", deaddrop: "Sumber konfigurasi jarak jauh (dead drop)", url: "URL", email: "Email"};
 // Labels when the file is judged malicious; neutral wording otherwise, so legitimate developers are never called attackers.
@@ -104,6 +105,9 @@ export function EndpointPanel({report}: {report: Report}) {
   const confirmed = (e: Endpoint) => seen(e) || inConfig(e.host);
   const servers = [...configOnly.map(extracted), ...statics.filter(confirmed).map(row), ...extra.map(runtime), ...statics.filter(e => !confirmed(e)).map(row)];
   const id = cert?.subject ? subject(cert.subject) : {}, debug = /Android Debug/i.test(cert?.subject || "");
+  // The public AOSP test/platform keys (android@android.com, Mountain View) ship with the Android source: anyone can sign
+  // with them, so their name/email/location say nothing about the author.
+  const publicKey = !debug && /android@android\.com/i.test(cert?.subject || ""), borrowed = debug || publicKey;
   const person = [id.CN, id.O && id.O !== id.CN ? id.O : "", id.OU && !/^android$/i.test(id.OU) ? id.OU : ""].filter(Boolean).join(" · ");
   const place = [id.L, id.ST, id.C].filter((v, i, a) => v && a.indexOf(v) === i).join(", ");
   const email = id.emailAddress || id.E;
@@ -113,25 +117,26 @@ export function EndpointPanel({report}: {report: Report}) {
     </div>
     <p>{suspect ? `Alamat server dan identitas yang dipakai pembuat ${app} ini. Data ini berguna untuk laporan ke pihak berwenang, bank, atau Telegram. Identitas di sertifikat diisi sendiri oleh pembuatnya, jadi bisa palsu, tetapi tetap bisa menghubungkan file-file dari pelaku yang sama.` : `Alamat yang dihubungi ${app} ini. Belum ada tanda berbahaya, jadi ini belum tentu milik penipu.`}{hidden ? " Sebagian alamat sengaja disembunyikan di dalam kode." : ""}</p>
     {suspect && <div className={styles.group}><h4><Fingerprint size={13}/>Identitas pelaku</h4>
-      {person && <Row tag="NAMA DI SERTIFIKAT" danger label={debug ? "Sertifikat debug bawaan Android: pembuatnya tidak memakai identitas sendiri" : "Diisi sendiri oleh pembuat aplikasi, bisa palsu"} value={person}/>}
-      {email && <Row tag="EMAIL PELAKU" danger label="Email di sertifikat penanda tangan" value={email}/>}
-      {place && !debug && <Row tag="LOKASI DI SERTIFIKAT" label="Bisa palsu" value={place}/>}
+      {person && <Row tag="NAMA DI SERTIFIKAT" danger label={debug ? "Sertifikat debug bawaan Android: pembuatnya tidak memakai identitas sendiri" : publicKey ? "Kunci uji publik AOSP yang bisa dipakai siapa saja: pembuatnya tidak memakai identitas sendiri" : "Diisi sendiri oleh pembuat aplikasi, bisa palsu"} value={person}/>}
+      {email && !borrowed && <Row tag="EMAIL PELAKU" danger label="Email di sertifikat penanda tangan" value={email}/>}
+      {place && !borrowed && <Row tag="LOKASI DI SERTIFIKAT" label="Bisa palsu" value={place}/>}
       {signer && <Row tag="PENANDA TANGAN" danger label="Authenticode program Windows" value={signer}/>}
-      {cert?.sha256 && <Row tag="SIDIK JARI PELAKU" danger label={`SHA-256 sertifikat${cert.validFrom ? `, dibuat ${cert.validFrom.slice(0, 10)}` : ""}: sama berarti pembuat sama`} value={cert.sha256}/>}
+      {cert?.sha256 && <Row tag={borrowed ? "SIDIK JARI SERTIFIKAT" : "SIDIK JARI PELAKU"} danger={!borrowed} label={borrowed ? "Kunci umum yang dipakai banyak pembuat aplikasi, jadi tidak bisa menghubungkan file ke pelaku yang sama" : `SHA-256 sertifikat${cert.validFrom ? `, dibuat ${cert.validFrom.slice(0, 10)}` : ""}: sama berarti pembuat sama`} value={cert.sha256}/>}
       {bots.map(b => <Row key={b} tag="BOT PELAKU" danger label="ID bot Telegram (token disamarkan)" value={b}/>)}
       {chats.map(c => <Row key={c} tag="CHAT PELAKU" danger label="chat_id Telegram penerima data curian" value={c}/>)}
       {pkg && <Row tag="NAMA PAKET" label="Identitas aplikasi di Android" value={pkg}/>}
       {malware && <Row tag="KELUARGA MALWARE" danger label={family ? "Menurut abuse.ch" : "Menurut sandbox Tria.ge"} value={malware}/>}
     </div>}
-    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{showAll ? servers : servers.slice(0, VISIBLE)}
-      {servers.length > VISIBLE && <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? <>Tampilkan lebih sedikit<ChevronUp size={13}/></> : <>Lihat semua ({servers.length})<ChevronDown size={13}/></>}</button>}
+    {!!servers.length && <div className={styles.group}><h4>{suspect ? "Server pelaku" : "Server"}<span className={styles.count}>{servers.length}</span></h4>{servers.slice(0, VISIBLE)}
+      {servers.length > VISIBLE && <><Collapsible open={showAll}>{servers.slice(VISIBLE)}</Collapsible>
+        <button type="button" className={styles.more} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? "Tampilkan lebih sedikit" : `Lihat semua (${servers.length})`}<ChevronDown size={13} className={chevronClass(showAll)}/></button></>}
     </div>}
     {!!configs.length && <div className={styles.group}><h4>Konfigurasi terenkripsi yang berhasil dibuka<span className={styles.count}>{configs.length}</span></h4>
       {configs.map(c => <Row key={`${c.via}:${c.plaintext}`} tag={`DIDEKRIPSI (${c.algorithm.toUpperCase()})`} danger={suspect} label={`Dibuka dengan kunci yang tertanam di ${app} (${c.keySource}) · ${c.via}`} value={c.plaintext}/>)}
     </div>}
     {!!others.length && <div className={styles.group}>
-      <button type="button" className={styles.more} aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>URL lain di dalam file ({others.length}){showOthers ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}</button>
-      {showOthers && <><p className={styles.hint}>Alamat yang tertulis di dalam file tetapi tidak menunjukkan tanda server pelaku, misalnya situs dokumentasi atau layanan umum.</p>{others.map(e => <Row key={e.value} tag="URL TERKAIT" label={`URL · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={notes(e).join(" · ") || undefined}/>)}</>}
+      <button type="button" className={styles.more} aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>URL lain di dalam file ({others.length})<ChevronDown size={13} className={chevronClass(showOthers)}/></button>
+      <Collapsible open={showOthers}><p className={styles.hint}>Alamat yang tertulis di dalam file tetapi tidak menunjukkan tanda server pelaku, misalnya situs dokumentasi atau layanan umum.</p>{others.map(e => <Row key={e.value} tag="URL TERKAIT" label={`URL · ${where(e.source)}${e.via ? ` · ${e.via}` : ""}`} value={e.value} note={notes(e).join(" · ") || undefined}/>)}</Collapsible>
     </div>}
     <div className={panel.meta}><span>Ditemukan dari isi file tanpa menjalankannya{contacted.length || c2s.length ? `; alamat bertanda koneksi terpantau atau konfigurasi malware dicatat oleh sandbox ${[...new Set([...contacted.flatMap(c => c.by), ...c2s.length ? ["Tria.ge"] : []])].join(" dan ")} yang menjalankan file ini (bukan Kheronyx)` : ""}</span><span>{configs.length ? `Konfigurasi terenkripsi dibuka statis dengan kunci bawaan ${app}; alamat yang diunduh saat berjalan tidak terlihat` : `Alamat yang diunduh atau didekripsi saat ${app} berjalan tidak terlihat`}</span></div>
   </section>;

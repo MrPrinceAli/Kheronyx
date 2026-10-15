@@ -1,0 +1,8 @@
+.collapse { gap: inherit; display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows .38s cubic-bezier(.2, .8, .2, 1), opacity .28s ease, transform .38s cubic-bezier(.2, .8, .2, 1); }
+.collapse.open { grid-template-rows: 1fr; opacity: 1; transform: none; }
+.inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: inherit; }
+.chevron { transition: transform .3s cubic-bezier(.2, .8, .2, 1); }
+.turned { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .collapse, .chevron { transition: none; }
+}
