@@ -4,7 +4,7 @@ import AdmZip from "adm-zip";
 import { extractFile } from "../lib/extract";
 import { EndpointCollector, endpointHosts, type Endpoint } from "../lib/endpoints";
 import { decodeHidden } from "../lib/deobfuscate";
-import { endpointOnly, publicIpv4 } from "../lib/hosts";
+import { edgeNetwork, endpointOnly, publicIpv4 } from "../lib/hosts";
 import { threatIntelTargets } from "../lib/threat-intel";
 
 const TOKEN = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -185,4 +185,12 @@ test("library identifiers (WebRTC header-extension URIs, CRLs, bug links) and na
   assert.deepEqual(collect(strings, "native:libjingle_peerconnection_so.so"), []);
   assert.deepEqual(collect(strings.slice(0, 5), "dex"), []);
   assert.deepEqual(values(collect(["http://45.77.12.3:8080/gate.php"], "native:libc2.so")), ["http://45.77.12.3:8080/gate.php"]);
+});
+
+test("CDN edge IPs are recognised as shared, ordinary servers are not",()=>{
+  assert.equal(edgeNetwork("104.21.64.137"),"Cloudflare");
+  assert.equal(edgeNetwork("172.67.151.52"),"Cloudflare");
+  assert.equal(edgeNetwork("151.101.195.52"),"Fastly");
+  for(const ip of ["103.146.158.229","44.210.57.23","104.32.0.1","8.8.8.8"]) assert.equal(edgeNetwork(ip),undefined,ip);
+  assert.equal(edgeNetwork("cloudflare.com"),undefined);
 });

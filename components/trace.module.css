@@ -6,6 +6,8 @@
 .row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #fff; border: 1px solid #e8edf1; border-radius: 9px; }
 .tag { flex-shrink: 0; min-width: 116px; padding: 4px 7px; border-radius: 5px; font: 600 7.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .8px; text-align: center; color: #5f6b77; background: #eef1f4; }
 .tag.danger { color: #fff; background: var(--red); box-shadow: 0 0 0 1px #bd404233, 0 2px 6px #bd40422e; }
+.tag.shared { color: #8a5a12; background: #fdf1dc; box-shadow: 0 0 0 1px #e9b75a55; }
+.edge { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 6px; border: 1px solid #eef1f4; border-radius: 7px; font-size: 9px; font-weight: 600; color: #5f6b77; }
 .body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .body small { font-size: 8.5px; color: #8b97a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .body code { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: #1f2830; overflow-wrap: anywhere; }

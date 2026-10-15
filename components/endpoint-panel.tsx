@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Check, ChevronDown, Copy, Fingerprint, RadioTower, UserX } from "lucide-react";
 import type { Report, SandboxContact } from "@/lib/types";
 import type { Endpoint } from "@/lib/endpoints";
-import { hostOf, registrableDomain } from "@/lib/hosts";
+import { edgeNetwork, hostOf, registrableDomain } from "@/lib/hosts";
 import panel from "./virus-total.module.css";
 import styles from "./trace.module.css";
 import { Collapsible, chevronClass } from "./collapsible";
+import { EdgeLogo } from "./edge-logo";
 
 const KIND: Record<string, string> = {telegram: "Bot Telegram", panel: "Panel web", ip: "Server IP langsung", ddns: "Domain dinamis (DDNS)", tunnel: "Tunnel", firebase: "Firebase", webhook: "Webhook", deaddrop: "Sumber konfigurasi jarak jauh (dead drop)", phishing: "Domain peniru merek", url: "URL", email: "Email"};
 // Labels when the file is judged malicious; neutral wording otherwise, so legitimate developers are never called attackers.
@@ -30,12 +31,13 @@ function CopyValue({value}: {value: string}) {
   const [done, setDone] = useState(false);
   return <button type="button" className={styles.copy} aria-label={`Salin ${value}`} title="Salin" onClick={() => navigator.clipboard?.writeText(value).then(() => {setDone(true); setTimeout(() => setDone(false), 1400);}).catch(() => {})}>{done ? <Check size={12}/> : <Copy size={12}/>}</button>;
 }
-function Row({tag, label, value, note, danger}: {tag: string; label: string; value: string; note?: string; danger?: boolean}) {
+function Row({tag, label, value, note, danger, edge}: {tag: string; label: string; value: string; note?: string; danger?: boolean; edge?: string}) {
   // Notes are red only when they are bad news (known malicious host, newly registered domain, connection seen in a sandbox of a suspect file).
   const alarming = note ? /tercatat|domain baru|koneksi terpantau|konfigurasi malware/.test(note) : false;
   return <div className={styles.row}>
-    <span className={`${styles.tag} ${danger ? styles.danger : ""}`}>{tag}</span>
+    <span className={`${styles.tag} ${danger ? styles.danger : edge ? styles.shared : ""}`}>{tag}</span>
     <div className={styles.body}><small>{label}</small><code>{value}</code>{note && <em className={alarming ? "" : styles.calm}>{note}</em>}</div>
+    {edge && <EdgeLogo provider={edge} className={styles.edge}/>}
     <CopyValue value={value}/>
   </div>;
 }
@@ -89,10 +91,14 @@ export function EndpointPanel({report}: {report: Report}) {
   const statics = list.filter(e => e.kind !== "url" || seen(e) || inConfig(e.host)), others = list.filter(e => e.kind === "url" && !seen(e) && !inConfig(e.host));
   const configOnly = c2s.filter(x => !list.some(e => e.host === x.host));
   const extra = contacted.filter(c => !list.some(e => e.host === c.host || e.host === c.ip) && !c2s.some(x => x.host === c.host || x.host === c.ip));
-  const detail = (c: SandboxContact) => [c.host && c.ip ? `IP ${c.ip}` : "", c.port ? `port ${c.port}${c.protocol ? `/${c.protocol}` : ""}` : "", c.url || ""].filter(Boolean).join(" · ");
+  const detail = (c: SandboxContact) => [c.host && c.ip ? `IP ${c.ip}${edgeNetwork(c.ip) ? ` (${edgeNetwork(c.ip)})` : ""}` : "", c.port ? `port ${c.port}${c.protocol ? `/${c.protocol}` : ""}` : "", c.url || ""].filter(Boolean).join(" · ");
+  // A bare CDN edge IP (Cloudflare, Fastly) is shared by many sites and hides the real server: neutral "IP SHARING"
+  // with the provider's logo instead of an attacker-server tag.
+  const sharedRow = (key: string, value: string, edge: string, how: string, n: string[]) => <Row key={key} tag="IP SHARING" edge={edge} label={`IP bersama milik ${edge}, dipakai banyak situs sekaligus · ${how}`} value={value} note={[`Server aslinya tersembunyi di balik ${edge} dan nama domainnya tidak terekam, jadi IP ini tidak menunjuk ke pelaku`, ...n].join(" · ")}/>;
   const row = (e: Endpoint) => {
     const n = notes(e), by = seenBy(e.host), brand = lookalike(e); if (inConfig(e.host)) n.unshift("juga ada di konfigurasi malware (Tria.ge)"); if (by) n.unshift(watched(by));
-    const at = `${where(e.source)}${e.via ? ` · ${e.via}` : ""}`;
+    const at = `${where(e.source)}${e.via ? ` · ${e.via}` : ""}`, edge = edgeNetwork(e.host);
+    if (edge) return sharedRow(`${e.kind}:${e.value}`, e.value, edge, at, n);
     // Look-alike brand domains: red "DOMAIN PENIRU" when the report is suspect or the match itself is strong (cheap TLD, free
     // hosting, punycode, lure word, or a newly registered domain per RDAP); otherwise the neutral "DOMAIN MIRIP MEREK".
     if (e.kind === "phishing" && brand) {const strong = suspect || brand.severity === "high" || n.some(x => x.startsWith("domain baru")); return <Row key={`${e.kind}:${e.value}`} tag={strong ? "DOMAIN PENIRU" : "DOMAIN MIRIP MEREK"} danger={strong} label={`Meniru ${brand.brand} · ${brand.reason} · ${at}`} value={e.value} note={n.join(" · ") || undefined}/>;}
@@ -103,13 +109,15 @@ export function EndpointPanel({report}: {report: Report}) {
     return <Row key={`config:${x.value}`} tag="KONFIG MALWARE" danger={suspect} label={`Dari konfigurasi malware yang diekstrak sandbox Tria.ge · ${x.family}${x.detail ? ` · ${x.detail}` : ""}`} value={x.value} note={n.join(" · ") || undefined}/>;
   };
   const runtime = (c: Contacted) => {
-    const value = c.host || c.ip!, d = detail(c), n = notes({value, host: value, kind: c.host ? "panel" : "ip", source: "sandbox"});
+    const value = c.host || c.ip!, d = detail(c), n = notes({value, host: value, kind: c.host ? "panel" : "ip", source: "sandbox"}), edge = c.host ? undefined : edgeNetwork(value);
+    if (edge) return sharedRow(`sandbox:${value}`, value, edge, `terhubung saat dijalankan di sandbox ${c.by.join(" dan ")}${d ? ` · ${d}` : ""}`, n);
     return <Row key={`sandbox:${value}`} tag={suspect ? "KONEKSI TERPANTAU" : "KONEKSI SAAT DIUJI"} danger={suspect} label={`Terpantau terhubung saat dijalankan di sandbox ${c.by.join(" dan ")}${d ? ` · ${d}` : ""}`} value={value} note={n.join(" · ") || undefined}/>;
   };
   // Strongest first: extracted malware-config C2s, static endpoints confirmed by a config or sandbox, sandbox-only
-  // contacts, then the rest.
-  const confirmed = (e: Endpoint) => seen(e) || inConfig(e.host);
-  const servers = [...configOnly.map(extracted), ...statics.filter(confirmed).map(row), ...extra.map(runtime), ...statics.filter(e => !confirmed(e)).map(row)];
+  // contacts, the rest, and shared CDN edge IPs last.
+  const confirmed = (e: Endpoint) => seen(e) || inConfig(e.host), shared = (host: string) => Boolean(edgeNetwork(host)) && !inConfig(host);
+  const own = statics.filter(e => !shared(e.host)), ownExtra = extra.filter(c => c.host || !shared(c.ip!));
+  const servers = [...configOnly.map(extracted), ...own.filter(confirmed).map(row), ...ownExtra.map(runtime), ...own.filter(e => !confirmed(e)).map(row), ...extra.filter(c => !ownExtra.includes(c)).map(runtime), ...statics.filter(e => shared(e.host)).map(row)];
   const id = cert?.subject ? subject(cert.subject) : {}, debug = /Android Debug/i.test(cert?.subject || "");
   // The public AOSP test/platform keys (android@android.com, Mountain View) ship with the Android source: anyone can sign
   // with them, so their name/email/location say nothing about the author.

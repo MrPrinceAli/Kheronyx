@@ -27,6 +27,15 @@ export const resolverIp = (ip: string) => RESOLVERS.has(ip) || /^208\.67\.(?:222
 export const placeholderIp = (ip: string) => /^(\d+)\.\1\.\1\.\1$/.test(ip) || ["1.2.3.4", "4.3.2.1", "12.34.56.78", "11.22.33.44", "123.45.67.89", "98.76.54.32"].includes(ip);
 // Routable unicast IPv4 (no leading zeros) that is not a well-known public resolver or a placeholder.
 export const publicIpv4 = (ip: string) => ipv4(ip) && !privateIp(ip) && !resolverIp(ip) && !placeholderIp(ip);
+// Anycast CDN/proxy edges (the providers' published IPv4 ranges): one edge IP fronts thousands of unrelated sites and
+// hides the origin server, so a bare edge IP never identifies whoever runs the site behind it.
+const EDGES: [string, string[]][] = [
+  ["Cloudflare", ["173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22"]],
+  ["Fastly", ["23.235.32.0/20", "43.249.72.0/22", "103.244.50.0/24", "103.245.222.0/23", "103.245.224.0/24", "104.156.80.0/20", "140.248.64.0/18", "140.248.128.0/17", "146.75.0.0/17", "151.101.0.0/16", "157.52.64.0/18", "167.82.0.0/17", "172.111.64.0/18", "185.31.16.0/22", "199.27.72.0/21", "199.232.0.0/16"]],
+];
+const ipNum = (ip: string) => ip.split(".").reduce((n, o) => n * 256 + Number(o), 0);
+const inCidr = (ip: string, cidr: string) => { const [base, bits] = cidr.split("/"), size = 2 ** (32 - Number(bits)); return Math.floor(ipNum(ip) / size) === Math.floor(ipNum(base) / size); };
+export const edgeNetwork = (ip: string) => ipv4(ip) ? EDGES.find(([, nets]) => nets.some(n => inCidr(ip, n)))?.[0] : undefined;
 export const validPort = (p: string | number | undefined) => p !== undefined && p !== "" && Number.isInteger(Number(p)) && Number(p) >= 1 && Number(p) <= 65535;
 export function hostOf(value: string) {
   try { return new URL(/^[a-z][\w+.-]*:\/\//i.test(value) ? value : `http://${value}`).hostname.toLowerCase().replace(/\.$/, ""); } catch { return ""; }
